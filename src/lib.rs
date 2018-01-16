@@ -220,7 +220,7 @@ impl<K, V, M> TotalOrderMultiMap<K, V, M>
                     ve.insert((meta, vec![]))
                 }
             };
-        //SAFETY: for unwind safety we have to **always** push the box/owning part befor
+        //SAFETY: for unwind safety we have to **always** push the box/owning part before
         // the pointer, that why 1st update meta (it can fail) then update `vec_data`
         // and then update the list we got from the 1st step.
         self.vec_data.push((key,value));
@@ -244,8 +244,7 @@ impl<K, V, M> TotalOrderMultiMap<K, V, M>
                 vec.remove(to_remove);
             }
             let res = self.vec_data.pop();
-            //unessesary sanity check
-            debug_assert!(res.is_some());
+            debug_assert!(res.is_some(), "sanity check that we indeet did pop something");
             res
         }
     }

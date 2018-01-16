@@ -1,7 +1,7 @@
 [package]
 authors = ["Philipp Korber <p.korber@1aim.com>"]
 categories = []
-description = "TODO"
+description = "A multimap with at the same time keeps the total insertion ordering of all elements "
 documentation = "https://docs.rs/total-order-multi-map"
 keywords = ["map", "vec", "ordered"]
 license = "MIT OR Apache-2.0"
