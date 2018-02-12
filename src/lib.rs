@@ -262,6 +262,7 @@ impl<K, V, M> TotalOrderMultiMap<K, V, M>
         }
     }
 
+    //TODO make sure this plays nicely with panic resume
     pub fn retain<FN>(&mut self, mut func: FN)
         where FN: FnMut(K, &V) -> bool
     {
@@ -298,27 +299,31 @@ impl<K, V, M> TotalOrderMultiMap<K, V, M>
 
     ///
     /// # Error
-    /// All k-v-pairs which can be added to this map, if one or
-    /// more errors occurred `Err(..)` is returned with a vector of
-    /// (K, V, Error)-tuples is returned.
+    /// All k-v-pairs which can be added to this map, if a error
+    /// occurres the operation short-circuits. Items already added to
+    /// the map stay in the map. And the error of failing to add
+    /// the item is returned as well as the iterator.
     ///
-    /// Note that even if `Err(..)` is returned all key-value pairs
-    /// which can be added to `self` are added.
-    pub fn extend<I>(&mut self, other: I) -> Result<(), Vec<(K, V, M, M::MergeError)>>
+    /// The error is a tuple of the key, the value, the
+    /// meta and the meta `MergeError` which prevented adding
+    /// the key.
+    ///
+    pub fn try_extend<I>(&mut self, other: I) -> Result<(), ((K, V, M, M::MergeError), I::IntoIter)>
         where I: IntoIterator<Item=(K, V, M)>
     {
-        let mut errors = Vec::new();
-        for (key, val, meta) in other.into_iter() {
+        let mut iter = other.into_iter();
+        let mut error = None;
+        for (key, val, meta) in &mut iter {
             let res = self.insert(key, val, meta);
             if let Err(err) = res {
-                errors.push(err)
+                error = Some(err);
+                break;
             }
         }
-        if errors.len() == 0 {
-            Ok(())
-        } else {
-            Err(errors)
+        if let Some(err) = error {
+            return Err((err, iter))
         }
+        Ok(())
     }
 }
 
@@ -852,5 +857,38 @@ mod test {
         );
     }
 
+    #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
+    pub enum TestMeta { Ok, Fail }
+    impl Meta for TestMeta {
+        type MergeError = String;
 
+        fn check_update(&self, other: &Self) -> Result<(), Self::MergeError> {
+            if let &TestMeta::Fail = other {
+                Err("noop".to_owned())
+            } else {
+                Ok(())
+            }
+        }
+        fn update(&mut self, _other: Self) {}
+    }
+    #[test]
+    fn extend_shor_cicuites_on_error() {
+        use self::TestMeta::*;
+        let mut map = TotalOrderMultiMap::new();;
+        let ext = vec![
+            ("k1", arc_str("v1"), Ok),
+            ("k1", arc_str("v2"), Fail),
+            ("k1", arc_str("v3"), Ok)
+        ];
+
+        let ((k,v,m,me), iter) = map.try_extend(ext.into_iter()).unwrap_err();
+        assert_eq!(k, "k1");
+        assert_eq!(&*v, "v2");
+        assert_eq!(m, Fail);
+        assert_eq!(me, "noop");
+
+        let tail = iter.collect::<Vec<_>>();
+        assert_eq!(tail, &[("k1", arc_str("v3"), Ok)]);
+
+    }
 }
