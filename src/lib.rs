@@ -634,6 +634,18 @@ impl<'a, T, M> Debug for EntryValues<'a, T, M>
 //    }
 //}
 
+//SAFE: only the *const V::Target is not default Send/Sync as it's a pointer but we
+//  can say it's safe, as we use the pointer "just" as a alternate way to access data
+//  we have a "safe" pointer to (e.g. Box if V is Box) so "from the outside" we can
+//  treat it just like that (through we still add a `V::Target: Send` constraint to
+//  be on the safe side
+unsafe impl<K: Send, M: Send, V: Send> Send for TotalOrderMultiMap<K, V, M>
+    where V: StableDeref, K: Hash + Eq + Copy, V::Target: Send {}
+
+//SAFE: see description for the Send impl
+unsafe impl<K: Sync, M: Sync, V: Sync> Sync for TotalOrderMultiMap<K, V, M>
+    where V: StableDeref, K: Hash + Eq + Copy, V::Target: Sync {}
+
 
 #[cfg(test)]
 mod test {
@@ -890,4 +902,12 @@ mod test {
         assert_eq!(tail, &[("k1", arc_str("v3"), Ok)]);
 
     }
+
+    trait AssertSend: Send {}
+    impl<K: Send, M: Send, V: Send> AssertSend for TotalOrderMultiMap<K, V, M>
+        where V: StableDeref, K: Hash + Eq + Copy, V::Target: Send {}
+
+    trait AssertSync: Sync {}
+    impl<K: Sync, M: Sync, V: Sync> AssertSync for TotalOrderMultiMap<K, V, M>
+        where V: StableDeref, K: Hash + Eq + Copy, V::Target: Sync {}
 }
