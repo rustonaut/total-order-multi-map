@@ -23,7 +23,6 @@
 extern crate stable_deref_trait;
 
 use std::collections::{ HashMap, hash_map};
-use std::ops::Deref;
 use std::{vec, slice};
 use std::hash::Hash;
 use std::cmp::{Eq, PartialEq};
@@ -102,7 +101,7 @@ impl Meta for NoMeta {
 // - reminder: implementing `StableDeref` for a trait which on a safty level
 //   relies on sideffects (e.g. using inner mutability) in deref is unsafe
 pub struct TotalOrderMultiMap<K, V, M>
-    where V: Deref, K: Hash + Eq + Copy
+    where V: StableDeref, K: Hash + Eq + Copy
 {
     vec_data: Vec<(K, V)>,
     map_access: HashMap<K, (M, Vec<*const V::Target>)>,
