@@ -366,13 +366,18 @@ impl<K, V, M> Clone for TotalOrderMultiMap<K, V, M>
         for &(k, ref val) in self.vec_data.iter() {
             let nval = val.clone();
             let nptr: *const V::Target = &*nval;
-            vec_data.push((k, val.clone()));
+            vec_data.push((k, nval));
             match map_access.entry(k) {
                 Occupied(mut oe) => {
                     let access: &mut (M, Vec<*const V::Target>) = oe.get_mut();
+                    // this assumes that the order of the multi-map-value is
+                    // the same as the order in the vec, so it will brake if
+                    // there is ever an reordering in the MultiMap
                     access.1.push(nptr);
                 },
                 Vacant(ve) => {
+                    // this assume that the meta can just be cloned
+                    // and not touched anymore
                     let new_meta = self.map_access
                         .get(&k)
                         .expect("[BUG] map entries have to exist")
