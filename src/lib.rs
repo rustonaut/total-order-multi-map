@@ -654,6 +654,7 @@ unsafe impl<K: Sync, M: Sync, V: Sync> Sync for TotalOrderMultiMap<K, V, M>
 
 #[cfg(test)]
 mod test {
+    use std::mem;
     use std::collections::HashSet;
     use super::*;
 
@@ -661,6 +662,53 @@ mod test {
     use std::sync::Arc;
     fn arc_str(s: &str) -> Arc<str> {
         <Arc<str> as From<String>>::from(s.to_owned())
+    }
+
+
+    #[test]
+    fn clone_works_fine() {
+        let obj_single = Box::new("hy".to_owned());
+        let obj_multi_a = Box::new("there".to_owned());
+        let obj_multi_b = Box::new("so".to_owned());
+
+        // make sure the pointer are to the new addresses
+        let mut used_addresses = HashSet::new();
+        used_addresses.insert(&*obj_single as *const String as usize);
+        used_addresses.insert(&*obj_multi_a as *const String as usize);
+        used_addresses.insert(&*obj_multi_b as *const String as usize);
+
+        let mut map = TotalOrderMultiMap::with_capacity(10);
+        map.insert("k1", obj_single, NoMeta).unwrap();
+        map.insert("k2", obj_multi_a, NoMeta).unwrap();
+        map.insert("k2", obj_multi_b, NoMeta).unwrap();
+
+        let map2 = map.clone();
+        // "hide" map to make sure there
+        // is no accidental missuse
+        let __map = map;
+
+
+        //check if the addresses are "new" addresses
+        for val in map2.get("k1").unwrap() {
+            let ptr = val as *const String as usize;
+            assert!(!used_addresses.contains(&ptr));
+        }
+        for val in map2.get("k2").unwrap() {
+            let ptr = val as *const String as usize;
+            assert!(!used_addresses.contains(&ptr));
+        }
+
+        for (_k, v) in map2.iter() {
+            let ptr = v as *const String as usize;
+            assert!(!used_addresses.contains(&ptr));
+            // here we also make sure there are no collisions
+            used_addresses.insert(ptr);
+        }
+
+        assert_eq!(used_addresses.len(), 2 * map2.len());
+
+        mem::drop(__map);
+        mem::drop(map2);
     }
 
     #[test]
