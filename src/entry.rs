@@ -7,41 +7,37 @@ use stable_deref_trait::StableDeref;
 
 use utils::DebugIterableOpaque;
 
-use super::{ TotalOrderMultiMap, Meta };
+use super::TotalOrderMultiMap;
 
-//TODO add meta
-impl<K, V, M> TotalOrderMultiMap<K, V, M>
+impl<K, V> TotalOrderMultiMap<K, V>
     where K: Hash + Eq + Copy,
-          V: StableDeref,
-          M: Meta
+          V: StableDeref
 {
-    pub fn entry(&mut self, key: K) -> Entry<K, V, M> {
+    pub fn entry(&mut self, key: K) -> Entry<K, V> {
         let vec_data_ref = &mut self.vec_data;
         let map_access_entry = self.map_access.entry(key);
         Entry { vec_data_ref, map_access_entry }
     }
 }
 
-pub struct Entry<'a, K, V, M>
+pub struct Entry<'a, K, V>
     where K: 'a,
           V: StableDeref + 'a,
-          M: 'a
 {
     vec_data_ref: &'a mut Vec<(K, V)>,
-    map_access_entry: hash_map::Entry<'a, K, (M, Vec<*const V::Target>)>
+    map_access_entry: hash_map::Entry<'a, K, Vec<*const V::Target>>
 }
 
-impl<'a, K, V, M> Debug for Entry<'a, K, V, M>
+impl<'a, K, V> Debug for Entry<'a, K, V>
     where K: Hash + Eq + Copy + Debug + 'a,
           V: StableDeref + 'a,
-          V::Target: Debug,
-          M: Meta
+          V::Target: Debug
 {
     fn fmt(&self, fter: &mut fmt::Formatter) -> fmt::Result {
         use self::hash_map::Entry::*;
         let dio: Box<Debug> = match self.map_access_entry {
             Occupied(ref o) => {
-                Box::new(DebugIterableOpaque::new(o.get().1.iter().map(|&ptr| unsafe { &*ptr })))
+                Box::new(DebugIterableOpaque::new(o.get().iter().map(|&ptr| unsafe { &*ptr })))
             },
             //SAFE because of TotalOrderMultiMap safty constraints the pointer is always valid
             Vacant(..) => Box::new("[]")
@@ -55,62 +51,43 @@ impl<'a, K, V, M> Debug for Entry<'a, K, V, M>
 
 
 
-impl<'a, K, V, M> Entry<'a, K, V, M>
+impl<'a, K, V> Entry<'a, K, V>
     where K: Hash + Eq + Copy + 'a,
-          V: StableDeref + 'a,
-          M: Meta
+          V: StableDeref + 'a
 {
     pub fn key(&self) -> K {
         *self.map_access_entry.key()
     }
 
-    pub fn meta(&self) -> Option<&M> {
-        use self::hash_map::Entry::*;
-        match self.map_access_entry {
-            Occupied(ref o) => Some(&o.get().0),
-            Vacant(..) => None
-        }
-    }
-
-    pub fn meta_mut(&mut self) -> Option<&mut M> {
-        use self::hash_map::Entry::*;
-        match self.map_access_entry {
-            Occupied(ref mut o) => Some(&mut o.get_mut().0),
-            Vacant(..) => None
-        }
-    }
-
     pub fn value_count(&self) -> usize {
         use self::hash_map::Entry::*;
         match self.map_access_entry {
-            Occupied(ref o) => o.get().1.len(),
+            Occupied(ref o) => o.get().len(),
             Vacant(..) => 0
         }
     }
 
-    pub fn insert(self, val: V, meta: M) -> Result<(), M::MergeError>{
-        let Entry { vec_data_ref, map_access_entry } = self;
-        // 1. see if we can update and if so update the meta
-        // 2. update vec_data
-        // 3. only then insert ptr
+    pub fn insert(self, val: V) -> &'a V::Target {
         use self::hash_map::Entry::*;
+
+        let Entry { vec_data_ref, map_access_entry } = self;
         let ptr: *const V::Target = &*val;
         let key = *map_access_entry.key();
+
+        vec_data_ref.push((key, val));
+
         match map_access_entry {
             Occupied(mut oe) => {
-                let pair = oe.get_mut();
-                pair.0.check_update(&meta)?;
-                pair.0.update(meta);
-                vec_data_ref.push((key, val));
-                pair.1.push(ptr);
-                Ok(())
+                oe.get_mut().push(ptr);
             },
             Vacant(ve) => {
-                vec_data_ref.push((key, val));
-                ve.insert((meta, vec![ptr]));
-                Ok(())
+                ve.insert(vec![ptr]);
+
             }
         }
+
+        //can't use the entries return value as it's &mut Vec<ptr> with last == ptr
+        unsafe { &*ptr }
     }
 
 
@@ -121,21 +98,20 @@ impl<'a, K, V, M> Entry<'a, K, V, M>
 #[cfg(test)]
 mod test {
     use super::*;
-    use super::super::NoMeta;
 
     #[test]
     fn entry() {
         let mut map = TotalOrderMultiMap::new();
-        assert_ok!(map.insert("k1", "v1", NoMeta));
-        assert_ok!(map.insert("k2", "b", NoMeta));
-        assert_ok!(map.insert("k1", "v2", NoMeta));
+        map.insert("k1", "v1");
+        map.insert("k2", "b");
+        map.insert("k1", "v2");
 
 
         {
             let entry = map.entry("k1");
             assert_eq!("k1", entry.key());
             assert_eq!(2, entry.value_count());
-            assert_ok!(entry.insert("vX", NoMeta));
+            entry.insert("vX");
         }
 
         assert_eq!(
@@ -158,7 +134,7 @@ mod test {
             let entry = map.entry("k88");
             assert_eq!("k88", entry.key());
             assert_eq!(0, entry.value_count());
-            assert_ok!(entry.insert("end.", NoMeta));
+            entry.insert("end.");
         }
 
         assert_eq!(

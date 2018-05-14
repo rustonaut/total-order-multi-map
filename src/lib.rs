@@ -43,34 +43,10 @@ mod entry;
 mod map_iter;
 
 
-pub trait Meta {
-    type MergeError;
-
-    // the "can we update" logic is seperated from the update logic to
-    // enforce that no possible updates can never,
-    fn check_update(&self, other: &Self) -> Result<(), Self::MergeError>;
-    fn update(&mut self, other: Self);
-
-}
-
-
 // workaround for rust #35121 (`!` type)
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 pub struct Unreachable { _noop: () }
 
-#[derive(Debug, Default, Clone, Copy, Eq, PartialEq, Hash)]
-pub struct NoMeta;
-impl Meta for NoMeta {
-    //TODO(UPSTREAM): experimental/nightly (rustc #35121)
-    //type MergeError = !;
-    type MergeError = Unreachable;
-
-
-    fn check_update(&self, _other: &Self) -> Result<(), Self::MergeError> {
-        Ok(())
-    }
-    fn update(&mut self, _other: Self) {}
-}
 
 // # SAFETY constraints (internal):
 //
@@ -100,14 +76,14 @@ impl Meta for NoMeta {
 //
 // - reminder: implementing `StableDeref` for a trait which on a safty level
 //   relies on sideffects (e.g. using inner mutability) in deref is unsafe
-pub struct TotalOrderMultiMap<K, V, M>
+pub struct TotalOrderMultiMap<K, V>
     where V: StableDeref, K: Hash + Eq + Copy
 {
     vec_data: Vec<(K, V)>,
-    map_access: HashMap<K, (M, Vec<*const V::Target>)>,
+    map_access: HashMap<K, Vec<*const V::Target>>,
 }
 
-impl<K, V, M> Default for TotalOrderMultiMap<K, V, M>
+impl<K, V> Default for TotalOrderMultiMap<K, V>
     where K: Hash + Eq + Copy,
           V: StableDeref
 {
@@ -120,11 +96,9 @@ impl<K, V, M> Default for TotalOrderMultiMap<K, V, M>
 
 }
 
-impl<K, V, M> TotalOrderMultiMap<K, V, M>
+impl<K, V> TotalOrderMultiMap<K, V>
     where K: Hash+Eq+Copy,
-          V: StableDeref,
-          M: Meta
-
+          V: StableDeref
 {
     pub fn new() -> Self {
         Default::default()
@@ -152,7 +126,7 @@ impl<K, V, M> TotalOrderMultiMap<K, V, M>
     pub fn reverse(&mut self) {
         self.vec_data.reverse();
         for (_, val) in self.map_access.iter_mut() {
-            val.1.reverse()
+            val.reverse()
         }
     }
 
@@ -185,11 +159,10 @@ impl<K, V, M> TotalOrderMultiMap<K, V, M>
         self.map_access.contains_key(&k)
     }
 
-    pub fn get(&self, k: K) -> Option<EntryValues<V::Target, M>>{
+    pub fn get(&self, k: K) -> Option<EntryValues<V::Target>>{
         self.map_access.get(&k)
             .map(|vec| EntryValues {
-                inner_iter: vec.1.iter(),
-                meta: &vec.0,
+                inner_iter: vec.iter(),
             } )
     }
 
@@ -199,44 +172,40 @@ impl<K, V, M> TotalOrderMultiMap<K, V, M>
 //    }
 
     /// inserts a key, value pair returns the new count of values for the given key
-    pub fn insert(&mut self, key: K, value: V, meta: M) -> Result<usize, (K, V, M, M::MergeError)> {
+    pub fn insert(&mut self, key: K, value: V) -> usize {
         use self::hash_map::Entry::*;
 
 
         let ptr: *const V::Target = &*value;
         let entry = self.map_access.entry(key);
-        let meta_updated_data =
+        let data =
             match entry {
                 Occupied(oe) => {
-                    let data = oe.into_mut();
-                    if let Err(err) = data.0.check_update(&meta) {
-                        return Err((key, value, meta, err));
-                    }
-                    data.0.update(meta);
-                    data
+                    oe.into_mut()
                 },
                 Vacant(ve) => {
-                    ve.insert((meta, vec![]))
+                    ve.insert(vec![])
                 }
             };
         //SAFETY: for unwind safety we have to **always** push the box/owning part before
         // the pointer, that why 1st update meta (it can fail) then update `vec_data`
         // and then update the list we got from the 1st step.
-        self.vec_data.push((key,value));
-        meta_updated_data.1.push(ptr);
-        Ok(meta_updated_data.1.len())
+        self.vec_data.push((key, value));
+        data.push(ptr);
+        data.len()
     }
 
+    // remove and return the element last inserted
     pub fn pop(&mut self) -> Option<(K, V)> {
         if self.vec_data.is_empty() {
             None
         } else {
             {
-                let &(k, ref val) = &self.vec_data[self.vec_data.len()-1];
+                let &(k, ref val) = &self.vec_data[self.vec_data.len() - 1];
                 let val_ptr: *const V::Target = &**val;
                 let vec = &mut self.map_access.get_mut(&k)
-                    .expect("[BUG] key in vec_data but not map_access")
-                    .1;
+                    .expect("[BUG] key in vec_data but not map_access");
+
                 let to_remove = vec.iter().rposition(|ptr| {
                     *ptr == val_ptr
                 }).expect("[BUG] no ptr for value in map_access");
@@ -278,15 +247,15 @@ impl<K, V, M> TotalOrderMultiMap<K, V, M>
             {
                 if let Some(values) = self.map_access.get_mut(&key) {
                     //TODO use remove_item once stable (rustc #40062) [inlined unstable def]
-                    match values.1.iter().position(|x| *x == ptr) {
+                    match values.iter().position(|x| *x == ptr) {
                         Some(idx) => {
-                            values.1.remove(idx);
+                            values.remove(idx);
                         },
                         None => unreachable!(
                             "[BUG] inconsistent state, value is not in map_access but in vec_data")
                     }
-                    //FIXME(TEST): test remove map entry if values.1.is_empty()
-                    if !values.1.is_empty() {
+                    //FIXME(TEST): test remove map entry if values.is_empty()
+                    if !values.is_empty() {
                         continue
                     }
                 }
@@ -295,51 +264,9 @@ impl<K, V, M> TotalOrderMultiMap<K, V, M>
             self.map_access.remove(&key);
         }
     }
-
-    ///
-    /// # Error
-    /// All k-v-pairs which can be added to this map, if a error
-    /// occurres the operation short-circuits. Items already added to
-    /// the map stay in the map. And the error of failing to add
-    /// the item is returned as well as the iterator.
-    ///
-    /// The error is a tuple of the key, the value, the
-    /// meta and the meta `MergeError` which prevented adding
-    /// the key.
-    ///
-    pub fn try_extend<I>(&mut self, other: I) -> Result<(), ((K, V, M, M::MergeError), I::IntoIter)>
-        where I: IntoIterator<Item=(K, V, M)>
-    {
-        let mut iter = other.into_iter();
-        let mut error = None;
-        for (key, val, meta) in &mut iter {
-            let res = self.insert(key, val, meta);
-            if let Err(err) = res {
-                error = Some(err);
-                break;
-            }
-        }
-        if let Some(err) = error {
-            return Err((err, iter))
-        }
-        Ok(())
-    }
 }
 
-impl<K, V, M> TotalOrderMultiMap<K, V, M>
-    where K: Hash+Eq+Copy,
-          V: StableDeref,
-          M: Meta + Clone
-{
-    pub fn into_iter_with_meta(self) -> IntoIterWithMeta<K, V, M> {
-        IntoIterWithMeta {
-            vec_data: self.vec_data.into_iter(),
-            map_access: self.map_access
-        }
-    }
-}
-
-impl<K, V, M> Debug for TotalOrderMultiMap<K, V, M>
+impl<K, V> Debug for TotalOrderMultiMap<K, V>
     where K: Hash + Eq + Copy + Debug,
           V: StableDeref + Debug
 {
@@ -352,10 +279,9 @@ impl<K, V, M> Debug for TotalOrderMultiMap<K, V, M>
     }
 }
 
-impl<K, V, M> Clone for TotalOrderMultiMap<K, V, M>
+impl<K, V> Clone for TotalOrderMultiMap<K, V>
     where K: Hash + Eq + Copy,
-          V: StableDeref + Clone,
-          M: Meta + Clone
+          V: StableDeref + Clone
 {
     fn clone(&self) -> Self {
         use self::hash_map::Entry::*;
@@ -369,20 +295,14 @@ impl<K, V, M> Clone for TotalOrderMultiMap<K, V, M>
             vec_data.push((k, nval));
             match map_access.entry(k) {
                 Occupied(mut oe) => {
-                    let access: &mut (M, Vec<*const V::Target>) = oe.get_mut();
                     // this assumes that the order of the multi-map-value is
                     // the same as the order in the vec, so it will brake if
                     // there is ever an reordering in the MultiMap
-                    access.1.push(nptr);
+                    let mut vec: &mut Vec<*const V::Target> = oe.get_mut();
+                    vec.push(nptr);
                 },
                 Vacant(ve) => {
-                    // this assume that the meta can just be cloned
-                    // and not touched anymore
-                    let new_meta = self.map_access
-                        .get(&k)
-                        .expect("[BUG] map entries have to exist")
-                        .0.clone();
-                    ve.insert((new_meta, vec![nptr]));
+                    ve.insert(vec![nptr]);
                 }
             }
         }
@@ -391,10 +311,9 @@ impl<K, V, M> Clone for TotalOrderMultiMap<K, V, M>
 }
 
 
-impl<K, V, M> PartialEq<Self> for TotalOrderMultiMap<K, V, M>
+impl<K, V> PartialEq<Self> for TotalOrderMultiMap<K, V>
     where K: Hash + Eq + Copy,
           V: StableDeref + PartialEq<V>,
-          M: PartialEq<M>
 {
     #[inline]
     fn eq(&self, other: &Self) -> bool {
@@ -403,14 +322,13 @@ impl<K, V, M> PartialEq<Self> for TotalOrderMultiMap<K, V, M>
     }
 }
 
-impl<K, V, M> Eq for TotalOrderMultiMap<K, V, M>
+impl<K, V> Eq for TotalOrderMultiMap<K, V>
     where K: Hash + Eq + Copy,
           V: StableDeref + Eq,
-          M: Eq
 {}
 
 
-impl<K, V, M> IntoIterator for TotalOrderMultiMap<K, V, M>
+impl<K, V> IntoIterator for TotalOrderMultiMap<K, V>
     where K: Hash + Eq + Copy,
           V: StableDeref,
 {
@@ -426,10 +344,9 @@ impl<K, V, M> IntoIterator for TotalOrderMultiMap<K, V, M>
     }
 }
 
-impl<K, V, M> FromIterator<(K, V)> for TotalOrderMultiMap<K, V, M>
+impl<K, V> FromIterator<(K, V)> for TotalOrderMultiMap<K, V>
     where K: Hash + Eq + Copy,
           V: StableDeref,
-          M: Meta<MergeError=Unreachable> + Default
 {
 
     fn from_iter<I: IntoIterator<Item=(K,V)>>(src: I) -> Self {
@@ -448,130 +365,40 @@ impl<K, V, M> FromIterator<(K, V)> for TotalOrderMultiMap<K, V, M>
     }
 }
 
-//TODO(UPSTREAM): use `!` experimental/nightly (rustc #35121)
-impl<K, V, M> Extend<(K, V)> for TotalOrderMultiMap<K, V, M>
+impl<K, V> Extend<(K, V)> for TotalOrderMultiMap<K, V>
     where K: Hash + Eq + Copy,
-          V: StableDeref,
-          M: Meta<MergeError=Unreachable> + Default,
+          V: StableDeref
 {
     fn extend<I>(&mut self, src: I)
         where I: IntoIterator<Item=(K,V)>
     {
         for (key, value) in src.into_iter() {
-            let e = self.insert(key, value, M::default());
-            assert!(e.is_ok(), "Err(Unreachable) can not be created safely, but we still got it");
-        }
-    }
-}
-
-//TODO(UPSTREAM): use `!` experimental/nightly (rustc #35121)
-impl<K, V, M> Extend<(K, V, M)> for TotalOrderMultiMap<K, V, M>
-    where K: Hash + Eq + Copy,
-          V: StableDeref,
-          M: Meta<MergeError=Unreachable>
-{
-    fn extend<I>(&mut self, src: I)
-        where I: IntoIterator<Item=(K,V,M)>
-    {
-        for (key, value, meta) in src.into_iter() {
-            let e = self.insert(key, value, meta);
-            assert!(e.is_ok(), "Err(Unreachable) can not be created safely, but we still got it");
+            self.insert(key, value);
         }
     }
 }
 
 
-
-pub struct IntoIterWithMeta<K,V,M>
-    where K: Hash+Eq+Copy,
-          V: StableDeref,
-          M: Meta + Clone
-{
-    vec_data: vec::IntoIter<(K,V)>,
-    map_access: HashMap<K, (M, Vec<*const V::Target>)>
-}
-
-impl<K, V, M> Iterator for IntoIterWithMeta<K, V, M>
-    where K: Hash+Eq+Copy,
-          V: StableDeref,
-          M: Meta + Clone
-{
-    type Item = (K, V, M);
-
-    fn next(&mut self) -> Option<Self::Item> {
-        self.vec_data.next()
-            .map(|(key, val)| {
-                let meta = self.map_access.get(&key)
-                    .expect("[BUG] key in `vec_data` but not `map_access`")
-                    .0.clone();
-                (key, val, meta)
-            })
-    }
-
-    #[inline]
-    fn size_hint(&self) -> (usize, Option<usize>) {
-        self.vec_data.size_hint()
-    }
-}
-
-impl<K, V, M> ExactSizeIterator for IntoIterWithMeta<K, V, M>
-    where K: Hash + Eq + Copy,
-          V: StableDeref,
-          M: Meta + Clone
-{
-    fn len(&self) -> usize {
-        self.vec_data.len()
-    }
-}
-
-impl<K, V, M> Debug for IntoIterWithMeta<K, V, M>
-    where K: Hash + Eq + Copy + Debug,
-          V: StableDeref + Debug,
-          M: Meta + Clone + Debug
-{
-    fn fmt(&self, fter: &mut fmt::Formatter) -> fmt::Result {
-        let meta = DebugIterableOpaque::new(
-            self.map_access.iter().map(|(&key, &(ref meta, _))| {
-                (key, meta)
-            })
-        );
-        fter.debug_struct("IntoIterWithMeta")
-            .field("key_value_iter", &self.vec_data)
-            .field("meta_data", &meta)
-            .finish()
-    }
-}
-
-
-pub struct EntryValues<'a, T: ?Sized+'a, M: 'a>{
+pub struct EntryValues<'a, T: ?Sized+'a>{
     inner_iter: slice::Iter<'a, *const T>,
-    meta: &'a M
 }
 
-impl<'a, T, M> EntryValues<'a, T, M>
-    where T: ?Sized + 'a,
-          M: 'a
-{
-    pub fn meta(&self) -> &'a M {
-        self.meta
-    }
-}
+impl<'a, T> EntryValues<'a, T>
+    where T: ?Sized + 'a
+{}
 
-//FIMXE(UPSTREAM): StableDerefPlusMut
-//pub struct EntryValuesMut<'a, T: ?Sized+'a>(slice::IterMut<'a, *const T>);
 
 
 //for some reason derive does not work...
-impl<'a, T:?Sized+'a, M> Clone for EntryValues<'a, T, M> {
+impl<'a, T: ?Sized + 'a> Clone for EntryValues<'a, T> {
     fn clone(&self) -> Self {
         EntryValues {
             inner_iter: self.inner_iter.clone(),
-            meta: self.meta
         }
     }
 }
 
-impl<'a, T: ?Sized + 'a, M: 'a> Iterator for EntryValues<'a, T, M> {
+impl<'a, T: ?Sized + 'a> Iterator for EntryValues<'a, T> {
     type Item = &'a T;
 
     #[inline]
@@ -586,7 +413,7 @@ impl<'a, T: ?Sized + 'a, M: 'a> Iterator for EntryValues<'a, T, M> {
     }
 }
 
-impl<'a, T: ?Sized + 'a, M: 'a> ExactSizeIterator for EntryValues<'a, T, M> {
+impl<'a, T: ?Sized + 'a> ExactSizeIterator for EntryValues<'a, T> {
 
     #[inline]
     fn len(&self) -> usize {
@@ -594,20 +421,20 @@ impl<'a, T: ?Sized + 'a, M: 'a> ExactSizeIterator for EntryValues<'a, T, M> {
     }
 }
 
-impl<'a, T, M> Debug for EntryValues<'a, T, M>
-    where T: ?Sized + Debug + 'a,
-          M: Debug + 'a
+impl<'a, T> Debug for EntryValues<'a, T>
+    where T: ?Sized + Debug + 'a
 {
 
     fn fmt(&self, fter: &mut fmt::Formatter) -> fmt::Result {
         let metoo = DebugIterableOpaque::new(self.clone());
         fter.debug_struct("EntryValues")
             .field("inner_iter", &metoo)
-            .field("meta", self.meta)
             .finish()
     }
 }
 
+//TODO this was blocked but should now be doable
+//pub struct EntryValuesMut<'a, T: ?Sized+'a>(slice::IterMut<'a, *const T>);
 
 //impl<'a, T: ?Sized + 'a> Iterator for EntryValuesMut<'a, T> {
 //    type Item = &'a mut T;
@@ -644,11 +471,11 @@ impl<'a, T, M> Debug for EntryValues<'a, T, M>
 //  we have a "safe" pointer to (e.g. Box if V is Box) so "from the outside" we can
 //  treat it just like that (through we still add a `V::Target: Send` constraint to
 //  be on the safe side
-unsafe impl<K: Send, M: Send, V: Send> Send for TotalOrderMultiMap<K, V, M>
+unsafe impl<K: Send, V: Send> Send for TotalOrderMultiMap<K, V>
     where V: StableDeref, K: Hash + Eq + Copy, V::Target: Send {}
 
 //SAFE: see description for the Send impl
-unsafe impl<K: Sync, M: Sync, V: Sync> Sync for TotalOrderMultiMap<K, V, M>
+unsafe impl<K: Sync, V: Sync> Sync for TotalOrderMultiMap<K, V>
     where V: StableDeref, K: Hash + Eq + Copy, V::Target: Sync {}
 
 
@@ -678,9 +505,9 @@ mod test {
         used_addresses.insert(&*obj_multi_b as *const String as usize);
 
         let mut map = TotalOrderMultiMap::with_capacity(10);
-        map.insert("k1", obj_single, NoMeta).unwrap();
-        map.insert("k2", obj_multi_a, NoMeta).unwrap();
-        map.insert("k2", obj_multi_b, NoMeta).unwrap();
+        map.insert("k1", obj_single);
+        map.insert("k2", obj_multi_a);
+        map.insert("k2", obj_multi_b);
 
         let map2 = map.clone();
         // "hide" map to make sure there
@@ -717,10 +544,10 @@ mod test {
 
         assert_eq!(true, map.is_empty());
 
-        assert_ok!(map.insert("key1", Box::new(13u32), NoMeta));
+        map.insert("key1", Box::new(13u32));
 
         assert_eq!(false, map.is_empty());
-        assert_ok!(map.insert("key2", Box::new(1), NoMeta));
+        map.insert("key2", Box::new(1));
 
         assert_eq!(10, map.capacity());
         assert_eq!(2, map.len());
@@ -735,8 +562,8 @@ mod test {
 
         assert!(map.capacity() >= 3);
 
-        assert_ok!(map.insert("key1", Box::new(44), NoMeta));
-        assert_ok!(map.insert("key1", Box::new(44), NoMeta));
+        map.insert("key1", Box::new(44));
+        map.insert("key1", Box::new(44));
 
         assert_eq!(4, map.len());
         assert!(map.capacity() >= 4);
@@ -749,10 +576,10 @@ mod test {
     #[test]
     fn works_with_trait_objects() {
         use std::fmt::Debug;
-        let mut map = TotalOrderMultiMap::<&'static str, Box<Debug>, NoMeta>::new();
-        assert_ok!(map.insert("hy", Box::new("h".to_owned()), NoMeta));
-        assert_ok!(map.insert("hy", Box::new(2), NoMeta));
-        assert_ok!(map.insert("ho", Box::new("o".to_owned()), NoMeta));
+        let mut map = TotalOrderMultiMap::<&'static str, Box<Debug>>::new();
+        map.insert("hy", Box::new("h".to_owned()));
+        map.insert("hy", Box::new(2));
+        map.insert("ho", Box::new("o".to_owned()));
 
         let view = map.values().collect::<Vec<_>>();
         assert_eq!(
@@ -767,14 +594,14 @@ mod test {
         let a = arc_str("a");
         let co_a = a.clone();
         let eq_a = arc_str("a");
-        assert_ok!(map.insert("k1", a, NoMeta));
-        assert_ok!(map.insert("k1", co_a, NoMeta));
-        assert_ok!(map.insert("k1", eq_a.clone(), NoMeta));
-        assert_ok!(map.insert("k2", eq_a, NoMeta));
-        assert_ok!(map.insert("k3", arc_str("y"), NoMeta));
-        assert_ok!(map.insert("k4", arc_str("z"), NoMeta));
-        assert_ok!(map.insert("k4", arc_str("a"), NoMeta));
-        assert_ok!(map.insert("k1", arc_str("e"), NoMeta));
+        map.insert("k1", a);
+        map.insert("k1", co_a);
+        map.insert("k1", eq_a.clone());
+        map.insert("k2", eq_a);
+        map.insert("k3", arc_str("y"));
+        map.insert("k4", arc_str("z"));
+        map.insert("k4", arc_str("a"));
+        map.insert("k1", arc_str("e"));
 
         let val_k1 = map.get("k1");
         assert_eq!(true, val_k1.is_some());
@@ -817,9 +644,9 @@ mod test {
     #[test]
     fn pop() {
         let mut map = TotalOrderMultiMap::new();
-        assert_ok!(map.insert("k1", "hy", NoMeta));
-        assert_ok!(map.insert("k2", "ho", NoMeta));
-        assert_ok!(map.insert("k1", "last", NoMeta));
+        map.insert("k1", "hy");
+        map.insert("k2", "ho");
+        map.insert("k1", "last");
 
         let last = map.pop();
         assert_eq!(
@@ -848,8 +675,8 @@ mod test {
     #[test]
     fn reverse() {
         let mut map = TotalOrderMultiMap::new();
-        assert_ok!(map.insert("k1", "ok", NoMeta));
-        assert_ok!(map.insert("k2", "why not?", NoMeta));
+        map.insert("k1", "ok");
+        map.insert("k2", "why not?");
         map.reverse();
 
         assert_eq!(
@@ -862,10 +689,10 @@ mod test {
     #[test]
     fn remove_all() {
         let mut map = TotalOrderMultiMap::new();
-        assert_ok!(map.insert("k1", "ok", NoMeta));
-        assert_ok!(map.insert("k2", "why not?", NoMeta));
-        assert_ok!(map.insert("k1", "run", NoMeta));
-        assert_ok!(map.insert("k2", "jump", NoMeta));
+        map.insert("k1", "ok");
+        map.insert("k2", "why not?");
+        map.insert("k1", "run");
+        map.insert("k2", "jump");
         let did_rm = map.remove_all("k1");
         assert_eq!(true, did_rm);
         assert_eq!(false, map.remove_all("not_a_key"));
@@ -879,10 +706,10 @@ mod test {
     #[test]
     fn retain() {
         let mut map = TotalOrderMultiMap::new();
-        assert_ok!(map.insert("k1", "ok", NoMeta));
-        assert_ok!(map.insert("k2", "why not?", NoMeta));
-        assert_ok!(map.insert("k1", "run", NoMeta));
-        assert_ok!(map.insert("k2", "uh", NoMeta));
+        map.insert("k1", "ok");
+        map.insert("k2", "why not?");
+        map.insert("k1", "run");
+        map.insert("k2", "uh");
 
         map.retain(|key, val| {
             assert!(key.len() == 2);
@@ -899,10 +726,10 @@ mod test {
     fn retain_with_equal_pointers() {
         let mut map = TotalOrderMultiMap::new();
         let v1 = arc_str("v1");
-        assert_ok!(map.insert("k1", v1.clone(), NoMeta));
-        assert_ok!(map.insert("k2", v1.clone(), NoMeta));
-        assert_ok!(map.insert("k1", arc_str("v2"), NoMeta));
-        assert_ok!(map.insert("k1", v1, NoMeta));
+        map.insert("k1", v1.clone());
+        map.insert("k2", v1.clone());
+        map.insert("k1", arc_str("v2"));
+        map.insert("k1", v1);
 
         let mut rem_count = 0;
         map.retain(|_key, val| {
@@ -921,46 +748,12 @@ mod test {
         );
     }
 
-    #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
-    pub enum TestMeta { Ok, Fail }
-    impl Meta for TestMeta {
-        type MergeError = String;
-
-        fn check_update(&self, other: &Self) -> Result<(), Self::MergeError> {
-            if let &TestMeta::Fail = other {
-                Err("noop".to_owned())
-            } else {
-                Ok(())
-            }
-        }
-        fn update(&mut self, _other: Self) {}
-    }
-    #[test]
-    fn extend_shor_cicuites_on_error() {
-        use self::TestMeta::*;
-        let mut map = TotalOrderMultiMap::new();;
-        let ext = vec![
-            ("k1", arc_str("v1"), Ok),
-            ("k1", arc_str("v2"), Fail),
-            ("k1", arc_str("v3"), Ok)
-        ];
-
-        let ((k,v,m,me), iter) = map.try_extend(ext.into_iter()).unwrap_err();
-        assert_eq!(k, "k1");
-        assert_eq!(&*v, "v2");
-        assert_eq!(m, Fail);
-        assert_eq!(me, "noop");
-
-        let tail = iter.collect::<Vec<_>>();
-        assert_eq!(tail, &[("k1", arc_str("v3"), Ok)]);
-
-    }
 
     trait AssertSend: Send {}
-    impl<K: Send, M: Send, V: Send> AssertSend for TotalOrderMultiMap<K, V, M>
+    impl<K: Send, V: Send> AssertSend for TotalOrderMultiMap<K, V>
         where V: StableDeref, K: Hash + Eq + Copy, V::Target: Send {}
 
     trait AssertSync: Sync {}
-    impl<K: Sync, M: Sync, V: Sync> AssertSync for TotalOrderMultiMap<K, V, M>
+    impl<K: Sync, V: Sync> AssertSync for TotalOrderMultiMap<K, V>
         where V: StableDeref, K: Hash + Eq + Copy, V::Target: Sync {}
 }

@@ -7,12 +7,11 @@ use std::iter::ExactSizeIterator;
 
 use stable_deref_trait::StableDeref;
 
-use super::{ Meta, TotalOrderMultiMap };
+use super::TotalOrderMultiMap;
 
-impl<K, V, M> TotalOrderMultiMap<K, V, M>
+impl<K, V> TotalOrderMultiMap<K, V>
     where K: Hash + Eq + Copy,
           V: StableDeref,
-          M: Meta
 {
     pub fn iter(&self) -> Iter<K, V> {
         Iter {
@@ -69,10 +68,9 @@ impl<'a, K, V> ExactSizeIterator for Iter<'a, K, V>
 }
 
 
-impl<K, V, M> TotalOrderMultiMap<K, V, M>
+impl<K, V> TotalOrderMultiMap<K, V>
     where K: Hash + Eq + Copy,
-          V: StableDeref + DerefMut,
-          M: Meta
+          V: StableDeref + DerefMut
 {
     pub fn iter_mut(&mut self) -> IterMut<K, V> {
         IterMut {
@@ -85,7 +83,7 @@ pub struct IterMut<'a, K: 'a, V: 'a> {
     vec_iter: slice::IterMut<'a, (K, V)>
 }
 
-impl<'a, K, V> Iterator for IterMut<'a, K,V>
+impl<'a, K, V> Iterator for IterMut<'a, K, V>
     where K: Hash + Eq + Copy,
           V: StableDeref + DerefMut
 {
