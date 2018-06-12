@@ -617,30 +617,24 @@ impl<'a, T> Debug for EntryValues<'a, T>
 //    }
 //}
 
-//SAFE: only the *const V::Target is not default Send/Sync as it's a pointer but we
-//  can say it's safe, as we use the pointer "just" as a alternate way to access data
-//  we have a "safe" pointer to (e.g. Box if V is Box) so "from the outside" we can
-//  treat it just like that
-//
-//TODO this is more complex tripple check this
-// # Note
-//
-// Due to the constraints `V: Send + StableDeref` it should be enough if
-// `V` is `Send`, i.e. we do not need a constraint on `V::Target`. Practically
-// `V::Target` has to be `Sync` or `V` could not have implemented `Send` +
-// `StableDeref`
-// `V::Target`, doesn't need to be `Send` as long as `V` is send, e.g. `V` could be
-// some kind of reference to a value in another thread. For `V` to impl
-// `StableDeref + Send` `V::Target` has to be _at last_ `Sync` or `V` could not
-// have been `Send`. As such we add this constraint just to be sure.
-//
-unsafe impl<K: Send, V: Send> Send for TotalOrderMultiMap<K, V>
-    where V: StableDeref, K: Hash + Eq + Copy, V::Target: Sync {}
+/// see `SendSyncHelper`
+unsafe impl<K, V> Send for TotalOrderMultiMap<K, V>
+    where SyncSendHelper<K,V>: Send, V: StableDeref, K: Hash + Eq + Copy {}
 
-//SAFE: see description for the Send impl
-unsafe impl<K: Sync, V: Sync> Sync for TotalOrderMultiMap<K, V>
-    where V: StableDeref, K: Hash + Eq + Copy, V::Target: Sync {}
 
+/// see `SendSyncHelper`
+unsafe impl<K, V> Sync for TotalOrderMultiMap<K, V>
+    where SyncSendHelper<K,V>: Sync, V: StableDeref, K: Hash + Eq + Copy {}
+
+/// Delegate the job of deciding about Send, Sync to rustc (ignore this)
+///
+/// only the *const V::Target is not default Send/Sync in TotalOrderMultiMap as
+/// it's a pointer, but we can ignore it as whenever we accessed a value through
+/// it we can argue that we could have accessed the value "just" through safe code.
+/// It would just have been slower. And using the fast path doesn't circumvent any
+/// safety mechanisms like e.g. lock guards. As such if this struct is `Send`/`Sync`
+/// than `TotalOrderMultiMap` can be `Send`/`Sync`, too.
+pub struct SyncSendHelper<K, V>{ _p: ::std::marker::PhantomData<(K, V)> }
 
 #[cfg(test)]
 mod test {
