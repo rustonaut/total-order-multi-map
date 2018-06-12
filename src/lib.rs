@@ -406,35 +406,20 @@ impl<K, V> Debug for TotalOrderMultiMap<K, V>
     }
 }
 
-//TODO simplify implementation by using  Tomm::with_capacity + loop of insert k-v
 impl<K, V> Clone for TotalOrderMultiMap<K, V>
     where K: Hash + Eq + Copy,
           V: StableDeref + Clone
 {
     fn clone(&self) -> Self {
-        use self::hash_map::Entry::*;
-
-        let mut vec_data = Vec::with_capacity(self.vec_data.len());
-        let mut map_access = HashMap::with_capacity(self.map_access.len());
+        let vec_data = Vec::with_capacity(self.vec_data.len());
+        let map_access = HashMap::with_capacity(self.map_access.len());
+        let mut map = TotalOrderMultiMap { map_access, vec_data};
 
         for &(k, ref val) in self.vec_data.iter() {
-            let nval = val.clone();
-            let nptr: *const V::Target = &*nval;
-            vec_data.push((k, nval));
-            match map_access.entry(k) {
-                Occupied(mut oe) => {
-                    // this assumes that the order of the multi-map-value is
-                    // the same as the order in the vec, so it will brake if
-                    // there is ever an reordering in the MultiMap
-                    let mut vec: &mut Vec<*const V::Target> = oe.get_mut();
-                    vec.push(nptr);
-                },
-                Vacant(ve) => {
-                    ve.insert(vec![nptr]);
-                }
-            }
+            map.insert(k, val.clone());
         }
-        TotalOrderMultiMap { map_access, vec_data }
+
+        map
     }
 }
 
@@ -445,7 +430,6 @@ impl<K, V> PartialEq<Self> for TotalOrderMultiMap<K, V>
 {
     #[inline]
     fn eq(&self, other: &Self) -> bool {
-        //TODO compare meta data
         self.vec_data.eq(&other.vec_data)
     }
 }
