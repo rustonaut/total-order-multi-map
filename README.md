@@ -147,4 +147,8 @@ be dual licensed as above, without any additional terms or conditions.
 
 
 Change Log
-==========
+-----------
+
+- `v0.3`:
+  - `TotalOrderMultiMap.retain` now accepts a predicate accepting `&V::Target` instead
+    of `&V`

@@ -353,24 +353,32 @@ impl<K, V> TotalOrderMultiMap<K, V>
         }
     }
 
-    //TODO make sure this plays nicely with panic resume
+    //TODO use iter_mut(), &mut V::Target
     /// retains only key value pairs for which `func` returns true
     ///
     /// All key-value pairs for with the predicate `func` returns
     /// false will be removed.
     pub fn retain<FN>(&mut self, mut func: FN)
-        where FN: FnMut(K, &V) -> bool
+        where FN: FnMut(K, &V::Target) -> bool
     {
-        let mut to_remove = Vec::new();
-        self.vec_data.retain(|&(key, ref v)| {
-            let retrain = func(key, v);
-            if !retrain {
-                let vptr: *const V::Target = &**v;
-                to_remove.push((key, vptr));
+        let mut to_remove_ptr = Vec::new();
+        let mut to_remove_idx = Vec::new();
+
+        for (idx, (key, val)) in self.iter().enumerate() {
+            if !func(key, val) {
+                let vptr: *const V::Target = val;
+                to_remove_idx.push(idx);
+                to_remove_ptr.push((key, vptr));
             }
-            retrain
-        });
-        for (key, ptr) in to_remove.into_iter() {
+        }
+
+        if to_remove_idx.is_empty() {
+            return
+        }
+
+
+        for (key, ptr) in to_remove_ptr.into_iter() {
+            let needs_key_removal;
             {
                 if let Some(values) = self.map_access.get_mut(&key) {
                     //TODO use remove_item once stable (rustc #40062) [inlined unstable def]
@@ -381,15 +389,38 @@ impl<K, V> TotalOrderMultiMap<K, V>
                         None => unreachable!(
                             "[BUG] inconsistent state, value is not in map_access but in vec_data")
                     }
-                    //FIXME(TEST): test remove map entry if values.is_empty()
-                    if !values.is_empty() {
-                        continue
-                    }
+                    needs_key_removal = values.is_empty();
+                } else {
+                    unreachable!(
+                        "[BUG] inconsistent state, value is not in map_access but in vec_data")
                 }
-
             }
-            self.map_access.remove(&key);
+            if needs_key_removal {
+                self.map_access.remove(&key);
+            }
         }
+
+        let mut idx = 0;
+        //INDEX_SAFE: we shot circuited on empty
+        let mut next_removal = to_remove_idx[0];
+        let mut to_remove_idx = &to_remove_idx[1..];
+        self.vec_data.retain(|_| {
+            let retain =
+                if idx == next_removal {
+                    if to_remove_idx.is_empty() {
+                        //we won't get to idx == 0 again
+                        next_removal = 0;
+                    } else {
+                        next_removal = to_remove_idx[0];
+                        to_remove_idx = &to_remove_idx[1..];
+                    }
+                    false
+                } else {
+                    true
+                };
+            idx += 1;
+            retain
+        })
     }
 }
 
@@ -866,7 +897,7 @@ mod test {
         let mut rem_count = 0;
         map.retain(|_key, val| {
             if rem_count >= 2 { return true; }
-            if &**val == "v1" {
+            if &*val == "v1" {
                 rem_count += 1;
                 false
             } else {
