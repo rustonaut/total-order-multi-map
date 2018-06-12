@@ -1,24 +1,69 @@
-//! InDirection Optimized Total Order Multimap
+//! A multi map implementation which also keeps the
+//! total order of inserted elements. I.e. if you
+//! insert `(k1, v1)` then `(k2, v2)` then `(k1, v3)`.
+//! The order when iterating over it will be exact this
+//! insertion order. Through there is an `grouped_values`
+//! method returning a iterator over the values grouped
+//! by key, instead of iteration order.
 //!
-//! A multimap which keeps the total order of insertion
-//! (don't groups them by key). An still grants resonable
-//! fast access to the values.
+//! The map makes sure that normal iteration is roughly
+//! as fast a iterating over a vector but using `get` to
+//! get a (group of) values is also roughly as fast as
+//! using `get` on a `HashMap`. The draw back is that
+//! insertion is a bit slower.
 //!
-//! It is implemented as a vector of key, value pairs
-//! where the value has to be a container implementing
-//! stable deref (e.g. Box<T>) as well as a (multi-)map
-//! which contains pointers to the data contained by the
-//! values, granting fast access to it.
+//! Note that this implementation is made for values
+//! which dereference to the actually relevant values,
+//! (e.g. `Box<T>`, `Rc<T>`, `Arc<T>`, `&T`) and when
+//! accessing the map references to the inner values are
+//! returned (e.g. with a `Box<T>` references to `&T` are
+//! returned and the `Box` is not accessible).
 //!
+//! Because of implementation details it is required that
+//! the value containers implement `StableDeref`. Note that
+//! this multi map can, or more precisely is made to, handle
+//! unsized values like trait object or slices.
 //!
-//! Currently limited to Copy types, could support clone types
-//! but would be often quite a bad idea (except for shepish
-//! clonable types like e.g. a `Rc`/`Arc`).
-// a version of TotalOrderMultiMap could be build wich also relies on inner pointer
-// address stability to cheaply share the keys (would also
-// work with `&'static str` as `&T` is `StableDeref`).
-// The problem is how to handle ownership in that case,
-// so not done for now.
+//! # State of Implementation
+//!
+//! Currently a lot of possible and useful methods are
+//! missing, take a look at the readme for more details.
+//! Through core methods like `insert`, `get` and multiple
+//! iterators are implemented.
+//!
+//! # Example
+//!
+//! see the example directories `from_readme.rs` example,
+//! which is also present in the README.
+//!
+//! # Implementation Details
+//!
+//! This implementation internally has a `Vec` and
+//! a `HashMap`. The `Vec` contains key-value pairs
+//! and "owns" the values. It is used for simple
+//! iteration and keeps the insertion order. The
+//! `HashMap` is a map from keys to vectors of
+//! pointers to inner values. And represents
+//! the multi map part. The code makes sure that
+//! only pointers are in the hash map iff their
+//! "owned" value is in the `Vec` at _any_ part
+//! of execution, even during insertion. This is
+//! needed to make sure that this type is unwind
+//! safe. Also to make sure that the pointers to
+//! the inner values are always valid the values
+//! have to implement `StableDeref`, so even if
+//! the vec is moved/resized the pointers stay
+//! valid as they don't point into the vec, but
+//! to the inner value the value in the vec points
+//! to. In turn this also means that mutable references
+//! to the containers/values should _never_ be exposed,
+//! through mutable references to the inner values
+//! can be exposed.
+//!
+//! Note that for ease of implementation only Copy
+//! keys are allowed, this should be improved on in
+//! later versions.
+//!
 
 extern crate stable_deref_trait;
 
@@ -43,11 +88,6 @@ mod entry;
 mod map_iter;
 
 
-// workaround for rust #35121 (`!` type)
-#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
-pub struct Unreachable { _noop: () }
-
-
 // # SAFETY constraints (internal):
 //
 // - the ptr. contained in map_access have to be always valid,
@@ -61,7 +101,7 @@ pub struct Unreachable { _noop: () }
 //   only use `vec_data` or `map_access` but not both, especially
 //   so wrt. `&mut`.
 //
-// - UNDER ANY CIRCUMSTANC NEVER return a mutable reference to the
+// - UNDER ANY CIRCUMSTANCE NEVER return a mutable reference to the
 //   data container (`&mut V`) in difference to a `&mut T`/`&mut V::Target`
 //   it can override the container invalidating the `StableDeref` assumptions.
 //
@@ -74,8 +114,41 @@ pub struct Unreachable { _noop: () }
 // - reminder: as we keep pointers directly to the data we can't allow any
 //   mutation of the container
 //
-// - reminder: implementing `StableDeref` for a trait which on a safty level
-//   relies on sideffects (e.g. using inner mutability) in deref is unsafe
+// - reminder: implementing `StableDeref` for a trait which on a safety level
+//   relies on side-effects (e.g. using inner mutability) in deref is unsafe
+//
+/// A multi map with keeps the total ordering of inserted elements
+///
+/// The map is meant to contain values implementing `StableDeref`,
+/// methods like `get` and `iter` will iterate over the inner values
+/// referred to when dereferencing the values.
+///
+/// The key is currently limited to values implementing Copy.
+///
+/// See the module/crate level documentation for more details.
+///
+/// # Unwind Safety
+///
+/// This type is unwind + resume safe.
+/// Through in the unlikely case that a panic happens inside of
+/// a function like `insert`,`get` the resulting state might be
+/// inconsistent in a safe way, i.e. some values might be in the map,
+/// accessible during iteration but hey won't appear when using `get`.
+///
+/// Note that this can only happen in a few rare cases:
+///
+/// 1. `Vec::pop`/`Vec::reserve` panics
+/// 2. `HashMap::insert`/`HashMap::reserve` panics
+/// 3. for some reason `oom` does panic instead of aborting
+///
+/// Which mainly can happen in mainly following cases:
+///
+/// - the vector of key-value pairs tries to contain more then `isize::MAX` bytes
+/// - you use zero-sized values and overflow `usize` (which can't really happen as
+///   we store at last some data per inserting, i.e. you would overflow the vec first)
+///
+/// Generally speaking you won't run into any of this in normal circumstances and if
+/// you do it's likely that you are close to a system wide `oom` anyway.
 pub struct TotalOrderMultiMap<K, V>
     where V: StableDeref, K: Hash + Eq + Copy
 {
@@ -96,14 +169,27 @@ impl<K, V> Default for TotalOrderMultiMap<K, V>
 
 }
 
+// Note further implementations in sub-modules (entry.rs, iter.rs, ...)
 impl<K, V> TotalOrderMultiMap<K, V>
     where K: Hash+Eq+Copy,
           V: StableDeref
 {
+
+    /// create a new empty map
     pub fn new() -> Self {
         Default::default()
     }
 
+    /// crate a new map with a given `capacity`
+    ///
+    /// Note that this method will reserve the given
+    /// capacity for the internal `Vec` and `HashMap`,
+    /// but as it's a multi map it can not know how
+    /// elements will be distributed, as such using
+    /// `with_capacity` does _not_ guarantee that there
+    /// are no allocations if less than `capacity` elements
+    /// are inserted. Through it still can reduce the
+    /// number of allocations needed.
     pub fn with_capacity(capacity: usize) -> Self {
         TotalOrderMultiMap {
             vec_data: Vec::with_capacity(capacity),
@@ -111,10 +197,24 @@ impl<K, V> TotalOrderMultiMap<K, V>
         }
     }
 
+    /// returns the capacity (unreliable)
+    ///
+    /// This is not reliable as it only returns
+    /// the capacity of the underlying `Vec` not
+    /// considering the underlying `HashMap` or
+    /// the `Vec` used to turn the map into a
+    /// multi map.
     pub fn capacity(&self) -> usize {
         self.vec_data.capacity()
     }
 
+    /// reserves space for `n` additional elements
+    ///
+    /// The reservation is done in both the internal
+    /// `Vec` and `HashMap` but as the map is a multi
+    /// map this method is less helpful as e.g. on a
+    /// pure `Vec` or `HashMap`
+    ///
     /// # Panics
     /// if the new allocation size overflows `usize`
     pub fn reserve(&mut self, additional: usize) {
@@ -122,7 +222,14 @@ impl<K, V> TotalOrderMultiMap<K, V>
         self.map_access.reserve(additional);
     }
 
-    /// reverses internal (insertion) order
+    /// reverses insertion order
+    ///
+    /// After calling this the map will contains values
+    /// as if they had been inserted in reversed order.
+    ///
+    /// This will affect both the iteration order of
+    /// the fill map as well as the iteration order of
+    /// values returned by `get`.
     pub fn reverse(&mut self) {
         self.vec_data.reverse();
         for (_, val) in self.map_access.iter_mut() {
@@ -130,35 +237,51 @@ impl<K, V> TotalOrderMultiMap<K, V>
         }
     }
 
+    /// shrinks all internal containers to not contains any additional capacity
+    ///
+    /// Whether or not memory is freed depends in the dens on the `shrink_to_fit`
+    /// implementation of `Vec` and `HashMap`
     pub fn shrink_to_fit(&mut self) {
         self.vec_data.shrink_to_fit();
         self.map_access.shrink_to_fit();
+        for (_, val) in self.map_access.iter_mut() {
+            val.shrink_to_fit()
+        }
     }
 
+    /// returns the total number of elements
     pub fn len(&self) -> usize {
         self.vec_data.len()
     }
 
+    /// returns the total number of different keys
+    pub fn key_count(&self) -> usize {
+        self.map_access.len()
+    }
+
+    /// true if the map is empty
     pub fn is_empty(&self) -> bool {
         self.vec_data.is_empty()
     }
 
-    //
-    //drain range? what about drop+recovery safety while drain, map is already cleared...
-//    fn drain(&mut self) -> vec::Drain<(K, V)> {
-//        self.map_access.clear();
-//        self.vec_data.drain(..)
-//    }
-
+    /// empties this map
     pub fn clear(&mut self) {
         self.map_access.clear();
         self.vec_data.clear();
     }
 
+    /// true if the key is contained in the map
+    ///
+    /// does not state how many values are associated with it
     pub fn contains_key(&self, k: K) -> bool {
         self.map_access.contains_key(&k)
     }
 
+    /// returns values associated with the given key
+    ///
+    /// If the key is not in the map this will return `None`.
+    /// This also means that `EntryValues` has at at alst one
+    /// element.
     pub fn get(&self, k: K) -> Option<EntryValues<V::Target>>{
         self.map_access.get(&k)
             .map(|vec| EntryValues {
@@ -171,31 +294,25 @@ impl<K, V> TotalOrderMultiMap<K, V>
 //            .map(|vec| EntryValuesMut(vec.iter_mut()))
 //    }
 
-    /// inserts a key, value pair returns the new count of values for the given key
+    /// inserts a key, value pair and returns the new count of values for the given key
     pub fn insert(&mut self, key: K, value: V) -> usize {
         use self::hash_map::Entry::*;
 
-
         let ptr: *const V::Target = &*value;
-        let entry = self.map_access.entry(key);
-        let data =
-            match entry {
-                Occupied(oe) => {
-                    oe.into_mut()
-                },
-                Vacant(ve) => {
-                    ve.insert(vec![])
-                }
-            };
-        //SAFETY: for unwind safety we have to **always** push the box/owning part before
-        // the pointer, that why 1st update meta (it can fail) then update `vec_data`
-        // and then update the list we got from the 1st step.
         self.vec_data.push((key, value));
-        data.push(ptr);
-        data.len()
+        match self.map_access.entry(key) {
+            Occupied(oe) => {
+                let data = oe.into_mut();
+                data.push(ptr);
+                data.len()
+            },
+            Vacant(ve) => {
+                ve.insert(vec![ptr]).len()
+            }
+        }
     }
 
-    // remove and return the element last inserted
+    /// remove and return the element last inserted
     pub fn pop(&mut self) -> Option<(K, V)> {
         if self.vec_data.is_empty() {
             None
@@ -221,6 +338,12 @@ impl<K, V> TotalOrderMultiMap<K, V>
     // currently it returns true as long as at last one element is removed
     // once `drain_where` (or `drain_filter`) is stable it should be changed
     // to returning the removed values
+    /// removes all values associated with the given key
+    ///
+    /// I.e. this removes all key-value pairs which key
+    /// is equal to the given key.
+    ///
+    /// Returns true if at last one value was removed
     pub fn remove_all(&mut self, key_to_remove: K) -> bool {
         if let Some(_) = self.map_access.remove(&key_to_remove) {
             self.vec_data.retain(|&(key, _)| key != key_to_remove);
@@ -231,6 +354,10 @@ impl<K, V> TotalOrderMultiMap<K, V>
     }
 
     //TODO make sure this plays nicely with panic resume
+    /// retains only key value pairs for which `func` returns true
+    ///
+    /// All key-value pairs for with the predicate `func` returns
+    /// false will be removed.
     pub fn retain<FN>(&mut self, mut func: FN)
         where FN: FnMut(K, &V) -> bool
     {
@@ -279,6 +406,7 @@ impl<K, V> Debug for TotalOrderMultiMap<K, V>
     }
 }
 
+//TODO simplify implementation by using  Tomm::with_capacity + loop of insert k-v
 impl<K, V> Clone for TotalOrderMultiMap<K, V>
     where K: Hash + Eq + Copy,
           V: StableDeref + Clone
@@ -310,7 +438,7 @@ impl<K, V> Clone for TotalOrderMultiMap<K, V>
     }
 }
 
-
+/// Compares for equality which does consider the insertion order
 impl<K, V> PartialEq<Self> for TotalOrderMultiMap<K, V>
     where K: Hash + Eq + Copy,
           V: StableDeref + PartialEq<V>,
@@ -322,6 +450,7 @@ impl<K, V> PartialEq<Self> for TotalOrderMultiMap<K, V>
     }
 }
 
+/// Compares for equality which does consider the insertion order
 impl<K, V> Eq for TotalOrderMultiMap<K, V>
     where K: Hash + Eq + Copy,
           V: StableDeref + Eq,
@@ -378,7 +507,15 @@ impl<K, V> Extend<(K, V)> for TotalOrderMultiMap<K, V>
     }
 }
 
-
+/// A type providing access to all values associated to "some key"
+///
+/// This is mainly an iterator over values, or more precisely
+/// references to the inner value of the values.
+///
+/// This is returned by `TotalOrderMultiMap.get`, so it does not
+/// contain the key as it should be known in any context where this
+/// type appear.
+///
 pub struct EntryValues<'a, T: ?Sized+'a>{
     inner_iter: slice::Iter<'a, *const T>,
 }
@@ -388,8 +525,7 @@ impl<'a, T> EntryValues<'a, T>
 {}
 
 
-
-//for some reason derive does not work...
+// This iterator can be cloned cheaply
 impl<'a, T: ?Sized + 'a> Clone for EntryValues<'a, T> {
     fn clone(&self) -> Self {
         EntryValues {
@@ -469,10 +605,22 @@ impl<'a, T> Debug for EntryValues<'a, T>
 //SAFE: only the *const V::Target is not default Send/Sync as it's a pointer but we
 //  can say it's safe, as we use the pointer "just" as a alternate way to access data
 //  we have a "safe" pointer to (e.g. Box if V is Box) so "from the outside" we can
-//  treat it just like that (through we still add a `V::Target: Send` constraint to
-//  be on the safe side
+//  treat it just like that
+//
+//TODO this is more complex tripple check this
+// # Note
+//
+// Due to the constraints `V: Send + StableDeref` it should be enough if
+// `V` is `Send`, i.e. we do not need a constraint on `V::Target`. Practically
+// `V::Target` has to be `Sync` or `V` could not have implemented `Send` +
+// `StableDeref`
+// `V::Target`, doesn't need to be `Send` as long as `V` is send, e.g. `V` could be
+// some kind of reference to a value in another thread. For `V` to impl
+// `StableDeref + Send` `V::Target` has to be _at last_ `Sync` or `V` could not
+// have been `Send`. As such we add this constraint just to be sure.
+//
 unsafe impl<K: Send, V: Send> Send for TotalOrderMultiMap<K, V>
-    where V: StableDeref, K: Hash + Eq + Copy, V::Target: Send {}
+    where V: StableDeref, K: Hash + Eq + Copy, V::Target: Sync {}
 
 //SAFE: see description for the Send impl
 unsafe impl<K: Sync, V: Sync> Sync for TotalOrderMultiMap<K, V>
@@ -751,7 +899,7 @@ mod test {
 
     trait AssertSend: Send {}
     impl<K: Send, V: Send> AssertSend for TotalOrderMultiMap<K, V>
-        where V: StableDeref, K: Hash + Eq + Copy, V::Target: Send {}
+        where V: StableDeref, K: Hash + Eq + Copy, V::Target: Sync {}
 
     trait AssertSync: Sync {}
     impl<K: Sync, V: Sync> AssertSync for TotalOrderMultiMap<K, V>

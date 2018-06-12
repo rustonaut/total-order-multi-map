@@ -1,3 +1,4 @@
+//TODO merge file with map_iter
 use std::hash::Hash;
 use std::cmp::Eq;
 use std::slice;

@@ -13,6 +13,7 @@ impl<K, V> TotalOrderMultiMap<K, V>
     where K: Hash + Eq + Copy,
           V: StableDeref
 {
+    /// return a entry for a given key
     pub fn entry(&mut self, key: K) -> Entry<K, V> {
         let vec_data_ref = &mut self.vec_data;
         let map_access_entry = self.map_access.entry(key);
@@ -55,10 +56,12 @@ impl<'a, K, V> Entry<'a, K, V>
     where K: Hash + Eq + Copy + 'a,
           V: StableDeref + 'a
 {
+    /// access the key used to construct this entry
     pub fn key(&self) -> K {
         *self.map_access_entry.key()
     }
 
+    /// return how many values are associated with this entries key
     pub fn value_count(&self) -> usize {
         use self::hash_map::Entry::*;
         match self.map_access_entry {
@@ -67,6 +70,7 @@ impl<'a, K, V> Entry<'a, K, V>
         }
     }
 
+    /// insert a value associating it with the key
     pub fn insert(self, val: V) -> &'a V::Target {
         use self::hash_map::Entry::*;
 

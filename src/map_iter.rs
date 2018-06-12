@@ -17,6 +17,10 @@ impl<K, V> TotalOrderMultiMap<K, V>
     where K: Hash+Eq+Copy,
           V: StableDeref
 {
+    /// return an iterator the keys of this multi map
+    ///
+    /// each key will only be returned once, there is
+    /// no specific order in which they keys are returned
     pub fn keys(&self) -> Keys<K, V::Target> {
         Keys(self.map_access.keys())
     }
@@ -26,10 +30,16 @@ impl<K, V> TotalOrderMultiMap<K, V>
         GroupedValues(self.map_access.iter())
     }
 
+    /// returns a iterator over the inner-values in this multi map
+    ///
+    /// Inner-Values are returned in the order they where inserted into
+    /// the map. Note that
     pub fn values(&self) -> Values<K, V> {
         Values(self.vec_data.iter())
     }
 
+
+    /// returns a iterator over the values in this multi map
     pub fn values_mut(&mut self) -> ValuesMut<K, V> {
         ValuesMut(self.vec_data.iter_mut())
     }
