@@ -308,23 +308,19 @@ impl<K, V> TotalOrderMultiMap<K, V>
 
     /// Adds a value for a given key to the multi map.
     ///
-    /// Returns the number of values for the given key.
-    pub fn add(&mut self, key: K, value: V) -> usize {
-        use self::hash_map::Entry::*;
-        let mut value = value;
+    /// Returns access the all values already added to
+    /// the key previously and this now added value
+    /// through `EntryValuesMut`
+    pub fn add(&mut self, key: K, value: V) -> EntryValuesMut<V::Target> {
+        self.entry(key).add(value)
+    }
 
-        let ptr: *mut V::Target = &mut *value;
-        self.vec_data.push((key, value));
-        match self.map_access.entry(key) {
-            Occupied(oe) => {
-                let data = oe.into_mut();
-                data.push(ptr);
-                data.len()
-            },
-            Vacant(ve) => {
-                ve.insert(vec![ptr]).len()
-            }
-        }
+    /// Sets the value associated with the given key.
+    ///
+    /// Values previously associated with the key are
+    /// removed and returned.
+    pub fn set(&mut self, key: K, value: V) -> Vec<V> {
+        self.entry(key).set(value)
     }
 
     /// Remove and return the element last inserted.
