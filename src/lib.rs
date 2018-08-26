@@ -13,11 +13,14 @@
 //! insertion is a bit slower.
 //!
 //! Note that this implementation is made for values
-//! which dereference to the actually relevant values,
-//! (e.g. `Box<T>`, `Rc<T>`, `Arc<T>`, `&T`) and when
-//! accessing the map references to the inner values are
-//! returned (e.g. with a `Box<T>` references to `&T` are
-//! returned and the `Box` is not accessible).
+//! which dereference to the actually relevant values.
+//! It is also temporary limited to values which implement
+//! `DerefMut`, this can be lifted in the future. (I.e.
+//! currently `Box<T>` is supported but `Rc<T>` can be
+//! supported in the future just not for `_mut` methods).
+//! When accessing the map references to the inner values
+//! are returned (e.g. with a `Box<T>` references to `&T`/`&mut T`
+//! are returned and the `Box` is not accessible).
 //!
 //! Because of implementation details it is required that
 //! the value containers implement `StableDeref`. Note that
@@ -28,8 +31,11 @@
 //!
 //! Currently a lot of possible and useful methods are
 //! missing, take a look at the readme for more details.
-//! Through core methods like `insert`, `get` and multiple
-//! iterators are implemented.
+//! Through core methods like `insert`, `get`, `get_mut`
+//! and multiple iterators are implemented.
+//!
+//! Also currently it is limited to `StableDeref + DerefMut`
+//! but this is only needed for `_mut` methods.
 //!
 //! # Example
 //!
@@ -100,11 +106,13 @@ mod map_iter;
 //   borrowed by the same kind of reference, a function giving
 //   out references (either direct or transitive) should either
 //   only use `vec_data` or `map_access` but not both, especially
-//   so wrt. `&mut`.
+//   so wrt. `&mut` (I.e. to use the contained `*mut T`'s as
+//   `&mut T` it's required to `&mut` borrow the map.
 //
 // - UNDER ANY CIRCUMSTANCE NEVER return a mutable reference to the
 //   data container (`&mut V`) in difference to a `&mut T`/`&mut V::Target`
 //   it can override the container invalidating the `StableDeref` assumptions.
+//
 //
 // ## StableDeref assumptions
 //
@@ -176,12 +184,12 @@ impl<K, V> TotalOrderMultiMap<K, V>
           V: StableDeref + DerefMut
 {
 
-    /// create a new empty map
+    /// Create a new empty map.
     pub fn new() -> Self {
         Default::default()
     }
 
-    /// crate a new map with a given `capacity`
+    /// Crate a new map with a given `capacity`.
     ///
     /// Note that this method will reserve the given
     /// capacity for the internal `Vec` and `HashMap`,
@@ -198,7 +206,7 @@ impl<K, V> TotalOrderMultiMap<K, V>
         }
     }
 
-    /// returns the capacity (unreliable)
+    /// Returns the capacity (unreliable).
     ///
     /// This is not reliable as it only returns
     /// the capacity of the underlying `Vec` not
@@ -209,7 +217,7 @@ impl<K, V> TotalOrderMultiMap<K, V>
         self.vec_data.capacity()
     }
 
-    /// reserves space for `n` additional elements
+    /// Reserves space for `n` additional elements.
     ///
     /// The reservation is done in both the internal
     /// `Vec` and `HashMap` but as the map is a multi
@@ -223,7 +231,7 @@ impl<K, V> TotalOrderMultiMap<K, V>
         self.map_access.reserve(additional);
     }
 
-    /// reverses insertion order
+    /// Reverses insertion order.
     ///
     /// After calling this the map will contains values
     /// as if they had been inserted in reversed order.
@@ -238,7 +246,7 @@ impl<K, V> TotalOrderMultiMap<K, V>
         }
     }
 
-    /// shrinks all internal containers to not contains any additional capacity
+    /// Shrinks all internal containers to not contains any additional capacity.
     ///
     /// Whether or not memory is freed depends in the dens on the `shrink_to_fit`
     /// implementation of `Vec` and `HashMap`
@@ -250,30 +258,30 @@ impl<K, V> TotalOrderMultiMap<K, V>
         }
     }
 
-    /// returns the total number of elements
+    /// Returns the total number of elements.
     pub fn len(&self) -> usize {
         self.vec_data.len()
     }
 
-    /// returns the total number of different keys
+    /// Returns the total number of different keys.
     pub fn key_count(&self) -> usize {
         self.map_access.len()
     }
 
-    /// true if the map is empty
+    /// Returns `true` if the map is empty.
     pub fn is_empty(&self) -> bool {
         self.vec_data.is_empty()
     }
 
-    /// empties this map
+    /// Empties this map.
     pub fn clear(&mut self) {
         self.map_access.clear();
         self.vec_data.clear();
     }
 
-    /// true if the key is contained in the map
+    /// Returns `true` if the key is contained in the map.
     ///
-    /// does not state how many values are associated with it
+    /// Does not state how many values are associated with it.
     pub fn contains_key(&self, k: K) -> bool {
         self.map_access.contains_key(&k)
     }
@@ -297,7 +305,7 @@ impl<K, V> TotalOrderMultiMap<K, V>
             .map(|vec| EntryValuesMut { inner_iter: vec.iter_mut() })
     }
 
-    /// inserts a key, value pair and returns the new count of values for the given key
+    /// Inserts a key, value pair and returns the new count of values for the given key.
     pub fn insert(&mut self, key: K, value: V) -> usize {
         use self::hash_map::Entry::*;
         let mut value = value;
@@ -316,7 +324,7 @@ impl<K, V> TotalOrderMultiMap<K, V>
         }
     }
 
-    /// remove and return the element last inserted
+    /// Remove and return the element last inserted.
     pub fn pop(&mut self) -> Option<(K, V)> {
         if self.vec_data.is_empty() {
             None

@@ -14,13 +14,18 @@ impl<K, V> TotalOrderMultiMap<K, V>
     where K: Hash + Eq + Copy,
           V: StableDeref + DerefMut,
 {
+    /// Returns a iterator over the key value pairs in insertion order.
+    ///
+    /// As this is a multi map a key can appear more than one time.
     pub fn iter(&self) -> Iter<K, V> {
         Iter {
             vec_iter: self.vec_data.iter()
         }
     }
+
 }
 
+/// Iterator over TotalOrderMultimap in insertion order.
 pub struct Iter<'a, K: 'a, V: 'a> {
     vec_iter: slice::Iter<'a, (K, V)>
 }
