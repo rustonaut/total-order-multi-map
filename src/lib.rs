@@ -74,7 +74,7 @@
 extern crate stable_deref_trait;
 extern crate vec_drain_where;
 
-use std::collections::{ HashMap, hash_map};
+use std::collections::HashMap;
 use std::{vec, slice};
 use std::hash::Hash;
 use std::cmp::{Eq, PartialEq};
