@@ -12,3 +12,4 @@ version = "0.4.0-wip"
 
 [dependencies]
 stable_deref_trait = "1.0"
+vec-drain-where = { path = "../vec-drain-where" }

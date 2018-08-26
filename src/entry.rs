@@ -3,8 +3,10 @@ use std::cmp::Eq;
 use std::fmt::{self, Debug};
 use std::collections::hash_map;
 use std::ops::DerefMut;
+use std::mem;
 
 use stable_deref_trait::StableDeref;
+use vec_drain_where::*;
 
 use utils::DebugIterableOpaque;
 
@@ -98,7 +100,40 @@ impl<'a, K, V> Entry<'a, K, V>
         EntryValuesMut { inner_iter: vals.iter_mut() }
     }
 
+    /// Sets a value for a given key, removing all previous associated values.
+    ///
+    /// Returns the values previous associated with the key.
+    pub fn set(self, val: V) -> Vec<V> {
+        use self::hash_map::Entry::*;
+        let mut val = val;
 
+        let Entry { vec_data_ref, map_access_entry } = self;
+        let ptr: *mut V::Target = val.deref_mut();
+        let key = *map_access_entry.key();
+
+        // we can't replace as we need to keep the insertion order
+        vec_data_ref.push((key, val));
+
+        let mut nr_of_old_vals =
+            match map_access_entry {
+                Occupied(mut oe) => {
+                    mem::replace(oe.get_mut(), vec![ptr]).len()
+                },
+                Vacant(ve) => {
+                    ve.insert(vec![ptr]);
+                    0
+                }
+            };
+
+        vec_data_ref.e_drain_where(move |&mut (ref k, _)| {
+            if nr_of_old_vals > 0 && k == &key {
+                nr_of_old_vals -= 1;
+                true
+            } else {
+                false
+            }
+        }).map(|(_k,v)| v).collect()
+    }
 }
 
 
@@ -108,7 +143,34 @@ mod test {
     use super::*;
 
     #[test]
-    fn entry() {
+    fn entry_set_with_prev_vals() {
+        let mut map = TotalOrderMultiMap::new();
+        map.add("k1", "v1".to_owned());
+        map.add("k2", "v2".to_owned());
+        map.add("k1", "v3".to_owned());
+        map.add("k3", "v4".to_owned());
+
+        let res = map.entry("k1").set("xx".to_owned());
+        assert_eq!(vec!["v1".to_owned(), "v3".to_owned()], res);
+
+        assert_eq!(
+            vec![ ("k2", "v2"), ("k3", "v4"), ("k1" , "xx") ],
+            map.iter().collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn entry_set_with_no_prev_vals() {
+        let mut map = TotalOrderMultiMap::new();
+        map.entry("k1").set("xx".to_owned());
+        assert_eq!(
+            vec![ ("k1" , "xx") ],
+            map.iter().collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn base() {
         let mut map = TotalOrderMultiMap::new();
         map.add("k1", "v1".to_owned());
         map.add("k2", "b".to_owned());

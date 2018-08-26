@@ -72,6 +72,7 @@
 //!
 
 extern crate stable_deref_trait;
+extern crate vec_drain_where;
 
 use std::collections::{ HashMap, hash_map};
 use std::{vec, slice};
