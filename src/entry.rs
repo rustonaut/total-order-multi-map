@@ -8,7 +8,7 @@ use stable_deref_trait::StableDeref;
 
 use utils::DebugIterableOpaque;
 
-use super::TotalOrderMultiMap;
+use super::{TotalOrderMultiMap, EntryValuesMut};
 
 impl<K, V> TotalOrderMultiMap<K, V>
     where K: Hash + Eq + Copy,
@@ -71,8 +71,8 @@ impl<'a, K, V> Entry<'a, K, V>
         }
     }
 
-    /// insert a value associating it with the key
-    pub fn insert(self, val: V) -> &'a mut V::Target {
+    /// Add a value to the values associated with the given keys.
+    pub fn add(self, val: V) -> EntryValuesMut<'a, V::Target> {
         use self::hash_map::Entry::*;
         let mut val = val;
 
@@ -82,18 +82,20 @@ impl<'a, K, V> Entry<'a, K, V>
 
         vec_data_ref.push((key, val));
 
-        match map_access_entry {
+        let vals = match map_access_entry {
             Occupied(mut oe) => {
-                oe.get_mut().push(ptr);
+                let mut mut_vec = oe.into_mut();
+                mut_vec.push(ptr);
+                mut_vec
             },
             Vacant(ve) => {
-                ve.insert(vec![ptr]);
+                ve.insert(vec![ptr])
 
             }
-        }
+        };
 
         // Can't use the entries return value as it's &mut Vec<ptr> with last == ptr.
-        unsafe { &mut *ptr }
+        EntryValuesMut { inner_iter: vals.iter_mut() }
     }
 
 
@@ -108,16 +110,16 @@ mod test {
     #[test]
     fn entry() {
         let mut map = TotalOrderMultiMap::new();
-        map.insert("k1", "v1".to_owned());
-        map.insert("k2", "b".to_owned());
-        map.insert("k1", "v2".to_owned());
+        map.add("k1", "v1".to_owned());
+        map.add("k2", "b".to_owned());
+        map.add("k1", "v2".to_owned());
 
 
         {
             let entry = map.entry("k1");
             assert_eq!("k1", entry.key());
             assert_eq!(2, entry.value_count());
-            entry.insert("vX".to_owned());
+            entry.add("vX".to_owned());
         }
 
         assert_eq!(
@@ -140,7 +142,7 @@ mod test {
             let entry = map.entry("k88");
             assert_eq!("k88", entry.key());
             assert_eq!(0, entry.value_count());
-            entry.insert("end.".to_owned());
+            entry.add("end.".to_owned());
         }
 
         assert_eq!(

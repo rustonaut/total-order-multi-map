@@ -35,11 +35,11 @@ type Value = Box<Display>;
 fn main() {
     let mut map = TotalOrderMultiMap::<Key, Value>::new();
 
-    map.insert("key1", mk_box_str("val1"));
-    map.insert("key1", mk_my_thingy("val2"));
-    map.insert("key2", mk_box_str("val3"));
-    map.insert("key1", mk_my_thingy("val4"));
-    map.insert("key0", mk_box_str("val5"));
+    map.add("key1", mk_box_str("val1"));
+    map.add("key1", mk_my_thingy("val2"));
+    map.add("key2", mk_box_str("val3"));
+    map.add("key1", mk_my_thingy("val4"));
+    map.add("key0", mk_box_str("val5"));
 
     let stringed = map
         .iter()

@@ -305,8 +305,10 @@ impl<K, V> TotalOrderMultiMap<K, V>
             .map(|vec| EntryValuesMut { inner_iter: vec.iter_mut() })
     }
 
-    /// Inserts a key, value pair and returns the new count of values for the given key.
-    pub fn insert(&mut self, key: K, value: V) -> usize {
+    /// Adds a value for a given key to the multi map.
+    ///
+    /// Returns the number of values for the given key.
+    pub fn add(&mut self, key: K, value: V) -> usize {
         use self::hash_map::Entry::*;
         let mut value = value;
 
@@ -459,7 +461,7 @@ impl<K, V> Clone for TotalOrderMultiMap<K, V>
         let mut map = TotalOrderMultiMap { map_access, vec_data};
 
         for &(k, ref val) in self.vec_data.iter() {
-            map.insert(k, val.clone());
+            map.add(k, val.clone());
         }
 
         map
@@ -529,7 +531,7 @@ impl<K, V> Extend<(K, V)> for TotalOrderMultiMap<K, V>
         where I: IntoIterator<Item=(K,V)>
     {
         for (key, value) in src.into_iter() {
-            self.insert(key, value);
+            self.add(key, value);
         }
     }
 }
@@ -688,9 +690,9 @@ mod test {
         used_addresses.insert(&*obj_multi_b as *const String as usize);
 
         let mut map = TotalOrderMultiMap::with_capacity(10);
-        map.insert("k1", obj_single);
-        map.insert("k2", obj_multi_a);
-        map.insert("k2", obj_multi_b);
+        map.add("k1", obj_single);
+        map.add("k2", obj_multi_a);
+        map.add("k2", obj_multi_b);
 
         let map2 = map.clone();
         // "hide" map to make sure there
@@ -727,10 +729,10 @@ mod test {
 
         assert_eq!(true, map.is_empty());
 
-        map.insert("key1", Box::new(13u32));
+        map.add("key1", Box::new(13u32));
 
         assert_eq!(false, map.is_empty());
-        map.insert("key2", Box::new(1));
+        map.add("key2", Box::new(1));
 
         assert_eq!(10, map.capacity());
         assert_eq!(2, map.len());
@@ -745,8 +747,8 @@ mod test {
 
         assert!(map.capacity() >= 3);
 
-        map.insert("key1", Box::new(44));
-        map.insert("key1", Box::new(44));
+        map.add("key1", Box::new(44));
+        map.add("key1", Box::new(44));
 
         assert_eq!(4, map.len());
         assert!(map.capacity() >= 4);
@@ -760,9 +762,9 @@ mod test {
     fn works_with_trait_objects() {
         use std::fmt::Debug;
         let mut map = TotalOrderMultiMap::<&'static str, Box<Debug>>::new();
-        map.insert("hy", Box::new("h".to_owned()));
-        map.insert("hy", Box::new(2));
-        map.insert("ho", Box::new("o".to_owned()));
+        map.add("hy", Box::new("h".to_owned()));
+        map.add("hy", Box::new(2));
+        map.add("ho", Box::new("o".to_owned()));
 
         let view = map.values().collect::<Vec<_>>();
         assert_eq!(
@@ -775,13 +777,13 @@ mod test {
     fn get_set() {
         let mut map = TotalOrderMultiMap::new();
         let a = "a".to_owned();
-        map.insert("k1", a.clone());
-        map.insert("k1", a.clone());
-        map.insert("k2", a.clone());
-        map.insert("k3", "y".to_owned());
-        map.insert("k4", "z".to_owned());
-        map.insert("k4", "a".to_owned());
-        map.insert("k1", "e".to_owned());
+        map.add("k1", a.clone());
+        map.add("k1", a.clone());
+        map.add("k2", a.clone());
+        map.add("k3", "y".to_owned());
+        map.add("k4", "z".to_owned());
+        map.add("k4", "a".to_owned());
+        map.add("k1", "e".to_owned());
 
         let val_k1 = map.get("k1").expect("expect some k1");
         assert_eq!(3, val_k1.len());
@@ -801,8 +803,8 @@ mod test {
         let b: Box<u32> = Box::new(13u32);
 
         let mut map = TotalOrderMultiMap::new();
-        map.insert(ka, a);
-        map.insert(kb, b);
+        map.add(ka, a);
+        map.add(kb, b);
 
         {
             let mut a_vals = map.get_mut(ka).expect("a to be there");
@@ -822,14 +824,14 @@ mod test {
     //     let a = arc_str("a");
     //     let co_a = a.clone();
     //     let eq_a = arc_str("a");
-    //     map.insert("k1", a);
-    //     map.insert("k1", co_a);
-    //     map.insert("k1", eq_a.clone());
-    //     map.insert("k2", eq_a);
-    //     map.insert("k3", arc_str("y"));
-    //     map.insert("k4", arc_str("z"));
-    //     map.insert("k4", arc_str("a"));
-    //     map.insert("k1", arc_str("e"));
+    //     map.add("k1", a);
+    //     map.add("k1", co_a);
+    //     map.add("k1", eq_a.clone());
+    //     map.add("k2", eq_a);
+    //     map.add("k3", arc_str("y"));
+    //     map.add("k4", arc_str("z"));
+    //     map.add("k4", arc_str("a"));
+    //     map.add("k1", arc_str("e"));
 
     //     let val_k1 = map.get("k1");
     //     assert_eq!(true, val_k1.is_some());
@@ -851,10 +853,10 @@ mod test {
     //     );
 
     //     let mut expected = HashSet::new();
-    //     expected.insert(("k1", vec![ "a", "a", "a", "e" ]));
-    //     expected.insert(("k2", vec![ "a" ]));
-    //     expected.insert(("k3", vec![ "y" ]));
-    //     expected.insert(("k4", vec![ "z", "a" ]));
+    //     expected.add(("k1", vec![ "a", "a", "a", "e" ]));
+    //     expected.add(("k2", vec![ "a" ]));
+    //     expected.add(("k3", vec![ "y" ]));
+    //     expected.add(("k4", vec![ "z", "a" ]));
     //     assert_eq!(
     //         expected,
     //         map.group_iter()
@@ -872,9 +874,9 @@ mod test {
     #[test]
     fn pop() {
         let mut map = TotalOrderMultiMap::new();
-        map.insert("k1", "hy".to_owned());
-        map.insert("k2", "ho".to_owned());
-        map.insert("k1", "last".to_owned());
+        map.add("k1", "hy".to_owned());
+        map.add("k2", "ho".to_owned());
+        map.add("k1", "last".to_owned());
 
         let last = map.pop();
         assert_eq!(
@@ -888,7 +890,7 @@ mod test {
 //        use std::sync::Arc;
 //        use std::cell::RefCell;
 //        let mut map = TotalOrderMultiMap::new();
-//        map.insert("k1", Arc::new(RefCell::new(12)));
+//        map.add("k1", Arc::new(RefCell::new(12)));
 //
 //        let cell = map.get_mut("k1").unwrap().next().unwrap();
 //        *cell.borrow_mut() = 55;
@@ -903,8 +905,8 @@ mod test {
     #[test]
     fn reverse() {
         let mut map = TotalOrderMultiMap::new();
-        map.insert("k1", "ok".to_owned());
-        map.insert("k2", "why not?".to_owned());
+        map.add("k1", "ok".to_owned());
+        map.add("k2", "why not?".to_owned());
         map.reverse();
 
         assert_eq!(
@@ -917,10 +919,10 @@ mod test {
     #[test]
     fn remove_all() {
         let mut map = TotalOrderMultiMap::new();
-        map.insert("k1", "ok".to_owned());
-        map.insert("k2", "why not?".to_owned());
-        map.insert("k1", "run".to_owned());
-        map.insert("k2", "jump".to_owned());
+        map.add("k1", "ok".to_owned());
+        map.add("k2", "why not?".to_owned());
+        map.add("k1", "run".to_owned());
+        map.add("k2", "jump".to_owned());
         let did_rm = map.remove_all("k1");
         assert_eq!(true, did_rm);
         assert_eq!(false, map.remove_all("not_a_key"));
@@ -934,10 +936,10 @@ mod test {
     #[test]
     fn retain() {
         let mut map = TotalOrderMultiMap::new();
-        map.insert("k1", "ok".to_owned());
-        map.insert("k2", "why not?".to_owned());
-        map.insert("k1", "run".to_owned());
-        map.insert("k2", "uh".to_owned());
+        map.add("k1", "ok".to_owned());
+        map.add("k2", "why not?".to_owned());
+        map.add("k1", "run".to_owned());
+        map.add("k2", "uh".to_owned());
 
         map.retain(|key, val| {
             assert!(key.len() == 2);
@@ -955,10 +957,10 @@ mod test {
     // fn retain_with_equal_pointers() {
     //     let mut map = TotalOrderMultiMap::new();
     //     let v1 = arc_str("v1");
-    //     map.insert("k1", v1.clone());
-    //     map.insert("k2", v1.clone());
-    //     map.insert("k1", arc_str("v2"));
-    //     map.insert("k1", v1);
+    //     map.add("k1", v1.clone());
+    //     map.add("k2", v1.clone());
+    //     map.add("k1", arc_str("v2"));
+    //     map.add("k1", v1);
 
     //     let mut rem_count = 0;
     //     map.retain(|_key, val| {
