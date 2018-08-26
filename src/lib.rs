@@ -292,18 +292,20 @@ impl<K, V> TotalOrderMultiMap<K, V>
     /// If the key is not in the map this will return `None`.
     /// This also means that `EntryValues` has at last one
     /// element.
-    pub fn get(&self, k: K) -> Option<EntryValues<V::Target>>{
+    pub fn get(&self, k: K) -> EntryValues<V::Target> {
         self.map_access.get(&k)
-            .map(|vec| EntryValues { inner_iter: vec.iter() })
+            .map(|vec| EntryValues::new(vec.iter()))
+            .unwrap_or_else(|| EntryValues::empty())
     }
 
     /// Returns mutable references associated with the given key.
     ///
     /// If the key is not in the map this will return `None`.
     /// This means the `EntryValuesMut` has at last one element.
-    pub fn get_mut(&mut self, k: K) -> Option<EntryValuesMut<V::Target>> {
+    pub fn get_mut(&mut self, k: K) -> EntryValuesMut<V::Target> {
         self.map_access.get_mut(&k)
-            .map(|vec| EntryValuesMut { inner_iter: vec.iter_mut() })
+            .map(|vec| EntryValuesMut::new(vec.iter_mut()))
+            .unwrap_or_else(|| EntryValuesMut::empty())
     }
 
     /// Adds a value for a given key to the multi map.
@@ -545,12 +547,20 @@ impl<K, V> Extend<(K, V)> for TotalOrderMultiMap<K, V>
 pub struct EntryValues<'a, T: ?Sized+'a>{
     /// Note: we might have `*mut T` value but we are only allowed to
     /// use them as `*const T` in this context!!
-    inner_iter: slice::Iter<'a, *mut T>,
+    inner_iter: Option<slice::Iter<'a, *mut T>>,
 }
 
 impl<'a, T> EntryValues<'a, T>
     where T: ?Sized + 'a
-{}
+{
+    pub fn empty() -> Self {
+        EntryValues { inner_iter: None }
+    }
+
+    fn new(inner_iter: slice::Iter<'a, *mut T>) -> Self {
+        EntryValues { inner_iter: Some(inner_iter) }
+    }
+}
 
 
 // This iterator can be cloned cheaply
@@ -568,12 +578,18 @@ impl<'a, T: ?Sized + 'a> Iterator for EntryValues<'a, T> {
     #[inline]
     fn next(&mut self) -> Option<Self::Item> {
         //SAFE: the pointers are guaranteed to be valid, at last for lifetime 'a
-        self.inner_iter.next().map(|&ptr| unsafe { &*ptr })
+        self.inner_iter
+            .as_mut()
+            .map(|iter| iter.next().map(|&ptr| unsafe { &*ptr }))
+            .unwrap_or(None)
     }
 
     #[inline]
     fn size_hint(&self) -> (usize, Option<usize>) {
-        self.inner_iter.size_hint()
+        self.inner_iter
+            .as_ref()
+            .map(|iter| iter.size_hint())
+            .unwrap_or((0, Some(0)))
     }
 }
 
@@ -581,7 +597,10 @@ impl<'a, T: ?Sized + 'a> ExactSizeIterator for EntryValues<'a, T> {
 
     #[inline]
     fn len(&self) -> usize {
-        self.inner_iter.len()
+        self.inner_iter
+            .as_ref()
+            .map(|iter| iter.len())
+            .unwrap_or(0)
     }
 }
 
@@ -607,7 +626,19 @@ impl<'a, T> Debug for EntryValues<'a, T>
 /// type appear.
 ///
 pub struct EntryValuesMut<'a, T: ?Sized+'a>{
-    inner_iter: slice::IterMut<'a, *mut T>,
+    inner_iter: Option<slice::IterMut<'a, *mut T>>,
+}
+
+impl<'a, T> EntryValuesMut<'a, T>
+    where T: ?Sized + 'a
+{
+    pub fn empty() -> Self {
+        EntryValuesMut { inner_iter: None }
+    }
+
+    fn new(inner_iter: slice::IterMut<'a, *mut T>) -> Self {
+        EntryValuesMut { inner_iter: Some(inner_iter) }
+    }
 }
 
 impl<'a, T: ?Sized + 'a> Iterator for EntryValuesMut<'a, T> {
@@ -616,12 +647,18 @@ impl<'a, T: ?Sized + 'a> Iterator for EntryValuesMut<'a, T> {
     #[inline]
     fn next(&mut self) -> Option<Self::Item> {
         //SAFE: the pointers are guaranteed to be valid, at last for lifetime 'a
-        self.inner_iter.next().map(|&mut ptr| unsafe { &mut *ptr })
+        self.inner_iter
+            .as_mut()
+            .map(|iter| iter.next().map(|&mut ptr| unsafe { &mut *ptr }))
+            .unwrap_or(None)
     }
 
     #[inline]
     fn size_hint(&self) -> (usize, Option<usize>) {
-        self.inner_iter.size_hint()
+        self.inner_iter
+            .as_ref()
+            .map(|iter| iter.size_hint())
+            .unwrap_or((0, Some(0)))
     }
 }
 
@@ -629,7 +666,10 @@ impl<'a, T: ?Sized + 'a> ExactSizeIterator for EntryValuesMut<'a, T> {
 
     #[inline]
     fn len(&self) -> usize {
-        self.inner_iter.len()
+        self.inner_iter
+            .as_ref()
+            .map(|iter| iter.len())
+            .unwrap_or(0)
     }
 }
 
@@ -698,11 +738,11 @@ mod test {
 
 
         //check if the addresses are "new" addresses
-        for val in map2.get("k1").unwrap() {
+        for val in map2.get("k1") {
             let ptr = val as *const String as usize;
             assert!(!used_addresses.contains(&ptr));
         }
-        for val in map2.get("k2").unwrap() {
+        for val in map2.get("k2") {
             let ptr = val as *const String as usize;
             assert!(!used_addresses.contains(&ptr));
         }
@@ -782,7 +822,7 @@ mod test {
         map.add("k4", "a".to_owned());
         map.add("k1", "e".to_owned());
 
-        let val_k1 = map.get("k1").expect("expect some k1");
+        let val_k1 = map.get("k1");
         assert_eq!(3, val_k1.len());
         assert_eq!((3, Some(3)), val_k1.size_hint());
         assert_eq!(
@@ -804,14 +844,14 @@ mod test {
         map.add(kb, b);
 
         {
-            let mut a_vals = map.get_mut(ka).expect("a to be there");
+            let mut a_vals = map.get_mut(ka);
             let ref_a = a_vals.next().unwrap();
             *ref_a = 44;
         }
         assert_eq!(2, map.len());
-        assert_eq!(Some(vec![44]), map.get(ka).map(|i| i.map(Clone::clone).collect()));
-        assert_eq!(Some(vec![13]), map.get(kb).map(|i| i.map(Clone::clone).collect()));
-        assert!(map.get(&ka[..1]).is_none());
+        assert_eq!(vec![44], map.get(ka).map(|v|*v).collect::<Vec<_>>());
+        assert_eq!(vec![13], map.get(kb).map(|v|*v).collect::<Vec<_>>());
+        assert_eq!(0, map.get(&ka[..1]).len());
     }
 
     // Re-enabled on non DerefMut can be used again

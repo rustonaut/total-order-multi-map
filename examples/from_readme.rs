@@ -42,7 +42,7 @@ fn main() {
     // iterate over the elements associated with the key
     // roughly with the speed of iterating over an `Vec`).
     {
-        let values = map.get("key1").expect("key1 is in the map");
+        let values = map.get("key1");
         let stringed = values
             .map(|val| format!("{}", val))
             .collect::<Vec<_>>();
@@ -58,7 +58,7 @@ fn main() {
     // or remove all for an specific key as it's
     // an multi map
     map.remove_all("key1");
-    assert!(map.get("key1").is_none());
+    assert_eq!(0, map.get("key1").len(), "expected no values for key1");
 
     println!("DONE (I only contain asserts)")
 }

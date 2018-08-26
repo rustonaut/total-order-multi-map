@@ -97,7 +97,7 @@ impl<'a, K, V> Entry<'a, K, V>
         };
 
         // Can't use the entries return value as it's &mut Vec<ptr> with last == ptr.
-        EntryValuesMut { inner_iter: vals.iter_mut() }
+        EntryValuesMut::new(vals.iter_mut())
     }
 
     /// Sets a value for a given key, removing all previous associated values.
@@ -191,7 +191,7 @@ mod test {
 
         assert_eq!(
             ["v1", "v2", "vX"],
-            map.get("k1").unwrap().collect::<Vec<_>>().as_slice()
+            map.get("k1").collect::<Vec<_>>().as_slice()
         );
 
         {
