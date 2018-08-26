@@ -12,7 +12,7 @@ use super::TotalOrderMultiMap;
 
 impl<K, V> TotalOrderMultiMap<K, V>
     where K: Hash + Eq + Copy,
-          V: StableDeref,
+          V: StableDeref + DerefMut,
 {
     pub fn iter(&self) -> Iter<K, V> {
         Iter {
@@ -33,7 +33,7 @@ impl<'a, K, V> Clone for Iter<'a, K, V> {
 
 impl<'a, K, V> Debug for Iter<'a, K, V>
     where K: Hash + Eq + Copy + Debug,
-          V: StableDeref,
+          V: StableDeref + DerefMut,
           V::Target: Debug
 {
     fn fmt(&self, fter: &mut fmt::Formatter) -> fmt::Result {
@@ -43,7 +43,7 @@ impl<'a, K, V> Debug for Iter<'a, K, V>
 
 impl<'a, K, V> Iterator for Iter<'a, K,V>
     where K: Hash + Eq + Copy,
-          V: StableDeref
+          V: StableDeref + DerefMut
 {
     type Item = (K, &'a V::Target);
 
@@ -61,7 +61,7 @@ impl<'a, K, V> Iterator for Iter<'a, K,V>
 
 impl<'a, K, V> ExactSizeIterator for Iter<'a, K, V>
     where K: Hash + Eq + Copy,
-          V: StableDeref
+          V: StableDeref + DerefMut
 {
     fn len(&self) -> usize {
         self.vec_iter.len()
@@ -92,9 +92,9 @@ impl<'a, K, V> Iterator for IterMut<'a, K, V>
 
     fn next(&mut self) -> Option<Self::Item> {
         self.vec_iter.next()
-            .map( |&mut (ref key, ref mut value)| {
+            .map(|&mut (ref key, ref mut value)| {
                 (*key, &mut **value)
-            } )
+            })
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
@@ -113,12 +113,10 @@ impl<'a, K, V> ExactSizeIterator for IterMut<'a, K, V>
 
 impl<'a, K, V> Debug for IterMut<'a, K, V>
     where K: Hash + Eq + Copy + Debug,
-          V: StableDeref+ DerefMut,
+          V: StableDeref + DerefMut+ DerefMut,
           V::Target: Debug
 {
     fn fmt(&self, fter: &mut fmt::Formatter) -> fmt::Result {
-        fter.debug_struct("IterMut")
-            .field("inner_iter", &"..")
-            .finish()
+        fter.write_str("IterMut { .. }")
     }
 }

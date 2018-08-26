@@ -8,29 +8,33 @@ use std::iter::{Iterator, ExactSizeIterator};
 
 use stable_deref_trait::StableDeref;
 
-use utils::DebugIterableOpaque;
 
 use super::TotalOrderMultiMap;
 
 
 impl<K, V> TotalOrderMultiMap<K, V>
     where K: Hash+Eq+Copy,
-          V: StableDeref
+          V: StableDeref + DerefMut
 {
-    /// return an iterator the keys of this multi map
+    /// Return an iterator the keys of this multi map.
     ///
     /// each key will only be returned once, there is
     /// no specific order in which they keys are returned
     pub fn keys(&self) -> Keys<K, V::Target> {
-        Keys(self.map_access.keys())
+        Keys { inner_iter: self.map_access.keys() }
+    }
+
+    /// Returns a iterator over all values grouped by key.
+    pub fn group_iter(&self) -> GroupedValues<K, V::Target> {
+        GroupedValues { inner_iter: self.map_access.iter() }
     }
 
     /// Returns a iterator over all values grouped by key
-    pub fn group_iter(&self) -> GroupedValues<K, V::Target> {
-        GroupedValues(self.map_access.iter())
+    pub fn group_iter_mut(&mut self) -> GroupedValuesMut<K, V::Target> {
+        GroupedValuesMut { inner_iter: self.map_access.iter_mut() }
     }
 
-    /// returns a iterator over the inner-values in this multi map
+    /// Returns a iterator over the inner-values in this multi map.
     ///
     /// Inner-Values are returned in the order they where inserted into
     /// the map. Note that
@@ -39,23 +43,20 @@ impl<K, V> TotalOrderMultiMap<K, V>
     }
 
 
-    /// returns a iterator over the values in this multi map
+    /// Returns a iterator over the values in this multi map.
     pub fn values_mut(&mut self) -> ValuesMut<K, V> {
         ValuesMut(self.vec_data.iter_mut())
     }
-
-    //UPSTREAM: requires a StableDerefMut
-//    pub fn grouped_values_mut(&self) -> GroupedValues<K, V> {
-//
-//    }
 }
 
 #[derive(Clone)]
-pub struct Keys<'a, K: 'a, T: ?Sized + 'a>(hash_map::Keys<'a, K, Vec<*const T>>);
+pub struct Keys<'a, K: 'a, T: ?Sized + 'a> {
+    inner_iter: hash_map::Keys<'a, K, Vec<*mut T>>
+}
 
 impl<'a, K: Debug+'a, T: 'a> Debug for Keys<'a, K, T> {
     fn fmt(&self, fter: &mut fmt::Formatter) -> fmt::Result {
-        self.0.fmt(fter)
+        self.inner_iter.fmt(fter)
     }
 }
 
@@ -66,12 +67,12 @@ impl<'a, K: 'a, T: 'a> Iterator for Keys<'a, K, T>
 
     #[inline]
     fn next(&mut self) -> Option<Self::Item> {
-        self.0.next().map(|&k|k)
+        self.inner_iter.next().map(|&k|k)
     }
 
     #[inline]
     fn size_hint(&self) -> (usize, Option<usize>) {
-        self.0.size_hint()
+        self.inner_iter.size_hint()
     }
 }
 
@@ -80,18 +81,21 @@ impl<'a, K, T> ExactSizeIterator for Keys<'a, K, T>
 {
     #[inline]
     fn len(&self) -> usize {
-        self.0.len()
+        self.inner_iter.len()
     }
 }
 
-/// a iterator over `&V::Target` values returned by `GroupedValues`
+//TODO consider merging this with EntryValues
+/// A iterator over `&V::Target` values returned by `GroupedValues`.
+///
 /// It will iterate over all values associated with a specific key
 /// in the order they where inserted.
 pub struct Group<'a, K, T>
     where K: Copy + 'a,
           T: ?Sized + 'a,
 {
-    inner_iter: slice::Iter<'a, *const T>,
+    /// Note: we have a & to an *mut so we can only use it as *const/&
+    inner_iter: slice::Iter<'a, *mut T>,
     key: K
 }
 
@@ -134,7 +138,48 @@ impl<'a, K, T> Iterator for Group<'a, K, T>
     }
 }
 
-impl<'a, K, T> ExactSizeIterator for Group<'a, K, T>
+/// A iterator over `&mut V::Target` values returned by `GroupedValues`.
+///
+/// It will iterate over all values associated with a specific key
+/// in the order they where inserted.
+pub struct GroupMut<'a, K, T>
+    where K: Copy + 'a,
+          T: ?Sized + 'a,
+{
+    /// Note: we have a & to an *mut so we can only use it as *const/&
+    inner_iter: slice::IterMut<'a, *mut T>,
+    key: K
+}
+
+impl<'a, K, T> GroupMut<'a, K, T>
+    where K: Copy + 'a,
+          T: ?Sized + 'a,
+{
+    pub fn key(&self) -> K {
+        self.key
+    }
+}
+
+impl<'a, K, T> Iterator for GroupMut<'a, K, T>
+    where K: Copy + 'a,
+          T: ?Sized + 'a
+{
+    type Item = &'a mut T;
+
+    #[inline]
+    fn next(&mut self) -> Option<Self::Item> {
+        //SAFE see TotalOrderMultiMap safety guarantees/constraints
+        self.inner_iter.next().map(|&mut ptr| unsafe { &mut *ptr } )
+    }
+
+    #[inline]
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.inner_iter.size_hint()
+    }
+}
+
+
+impl<'a, K, T> ExactSizeIterator for GroupMut<'a, K, T>
     where K: Copy + 'a,
           T: ?Sized + 'a,
 {
@@ -149,21 +194,20 @@ impl<'a, K, T> Debug for Group<'a, K, T>
           T: Debug + ?Sized + 'a,
 {
     fn fmt(&self, fter: &mut fmt::Formatter) -> fmt::Result {
-        let values = DebugIterableOpaque::new(self.clone());
-        fter.debug_struct("Group")
-            .field("key", &self.key())
-            .field("values", &values)
-            .finish()
+        fter.write_str("Group { .. }")
     }
 }
 
 
-/// an iterator of Groups (no fixed iteration order)
+/// An iterator of Groups (no fixed iteration order).
 pub struct GroupedValues<
     'a,
     K: Copy + 'a,
     T: ?Sized + 'a,
->(hash_map::Iter<'a, K, Vec<*const T>>);
+> {
+    /// Note: we have a `&` to an `*mut` so we can only use it as `*const`
+    inner_iter: hash_map::Iter<'a, K, Vec<*mut T>>
+}
 
 impl<'a, K, T> Clone for GroupedValues<'a, K, T>
     where K: Copy + 'a,
@@ -171,7 +215,7 @@ impl<'a, K, T> Clone for GroupedValues<'a, K, T>
 {
     #[inline]
     fn clone(&self) -> Self {
-        GroupedValues(self.0.clone())
+        GroupedValues { inner_iter: self.inner_iter.clone() }
     }
 
 }
@@ -195,7 +239,7 @@ impl<'a, K, T> Iterator for GroupedValues<'a, K, T>
 
     #[inline]
     fn next(&mut self) -> Option<Self::Item> {
-        self.0.next().map(|(k, values)| {
+        self.inner_iter.next().map(|(k, values)| {
             Group {
                 inner_iter: values.iter(),
                 key: *k,
@@ -204,11 +248,46 @@ impl<'a, K, T> Iterator for GroupedValues<'a, K, T>
     }
 }
 
+/// An iterator of Groups (no fixed iteration order).
+pub struct GroupedValuesMut<
+    'a,
+    K: Copy + 'a,
+    T: ?Sized + 'a,
+> {
+    inner_iter: hash_map::IterMut<'a, K, Vec<*mut T>>
+}
+
+impl<'a, K, T> Debug for GroupedValuesMut<'a, K, T>
+    where K: Copy + 'a,
+          T: Debug + ?Sized + 'a,
+{
+    fn fmt(&self, fter: &mut fmt::Formatter) -> fmt::Result {
+        fter.write_str("GroupedValuesMut { .. }")
+    }
+}
+
+impl<'a, K, T> Iterator for GroupedValuesMut<'a, K, T>
+    where K: Copy + 'a,
+          T: ?Sized + 'a,
+{
+    type Item = GroupMut<'a, K, T>;
+
+    #[inline]
+    fn next(&mut self) -> Option<Self::Item> {
+        self.inner_iter.next().map(|(k, values)| {
+            GroupMut {
+                inner_iter: values.iter_mut(),
+                key: *k,
+            }
+        })
+    }
+}
+
+
+
 pub struct Values<'a, K: 'a, V: 'a>(slice::Iter<'a, (K, V)>);
 pub struct ValuesMut<'a, K: 'a, V: 'a>(slice::IterMut<'a, (K, V)>);
 
-
-//for some reason derive does not work
 impl<'a, K: 'a, V: 'a> Clone for Values<'a, K, V> {
     fn clone(&self) -> Self {
         Values(self.0.clone())
@@ -216,7 +295,7 @@ impl<'a, K: 'a, V: 'a> Clone for Values<'a, K, V> {
 }
 
 impl<'a, K: 'a, V: 'a> Iterator for Values<'a, K, V>
-    where V: StableDeref
+    where V: StableDeref + DerefMut
 {
     type Item = &'a V::Target;
 
@@ -234,7 +313,7 @@ impl<'a, K: 'a, V: 'a> Iterator for Values<'a, K, V>
 }
 
 impl<'a, K: 'a, V: 'a> ExactSizeIterator for Values<'a, K, V>
-    where V: StableDeref
+    where V: StableDeref + DerefMut
 {
     fn len(&self) -> usize {
         self.0.len()
@@ -242,7 +321,7 @@ impl<'a, K: 'a, V: 'a> ExactSizeIterator for Values<'a, K, V>
 }
 
 impl<'a, K: 'a, V: 'a> Debug for Values<'a, K, V>
-    where V: StableDeref, V::Target: Debug
+    where V: StableDeref + DerefMut, V::Target: Debug
 {
     fn fmt(&self, fter: &mut fmt::Formatter) -> fmt::Result {
         fter.debug_list().entries(self.clone()).finish()
@@ -251,7 +330,7 @@ impl<'a, K: 'a, V: 'a> Debug for Values<'a, K, V>
 
 
 impl<'a, K: 'a, V: 'a> Iterator for ValuesMut<'a, K, V>
-    where V: StableDeref + DerefMut //not StableDerefMut!
+    where V: StableDeref + DerefMut
 {
     type Item = &'a mut V::Target;
 
@@ -278,11 +357,9 @@ impl<'a, K: 'a, V: 'a> ExactSizeIterator for ValuesMut<'a, K, V>
 }
 
 impl<'a, K: 'a, V: 'a> Debug for ValuesMut<'a, K, V>
-    where V: StableDeref, V::Target: Debug
+    where V: StableDeref + DerefMut, V::Target: Debug
 {
     fn fmt(&self, fter: &mut fmt::Formatter) -> fmt::Result {
-        fter.debug_struct("ValuesMut")
-            .field("inner_iter", &"..")
-            .finish()
+        fter.write_str("ValuesMut { .. }")
     }
 }

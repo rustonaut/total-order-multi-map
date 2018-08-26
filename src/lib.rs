@@ -73,6 +73,7 @@ use std::hash::Hash;
 use std::cmp::{Eq, PartialEq};
 use std::iter::{ Extend, FromIterator };
 use std::fmt::{self, Debug};
+use std::ops::DerefMut;
 
 use stable_deref_trait::StableDeref;
 
@@ -150,15 +151,15 @@ mod map_iter;
 /// Generally speaking you won't run into any of this in normal circumstances and if
 /// you do it's likely that you are close to a system wide `oom` anyway.
 pub struct TotalOrderMultiMap<K, V>
-    where V: StableDeref, K: Hash + Eq + Copy
+    where V: StableDeref + DerefMut, K: Hash + Eq + Copy
 {
     vec_data: Vec<(K, V)>,
-    map_access: HashMap<K, Vec<*const V::Target>>,
+    map_access: HashMap<K, Vec<*mut V::Target>>,
 }
 
 impl<K, V> Default for TotalOrderMultiMap<K, V>
     where K: Hash + Eq + Copy,
-          V: StableDeref
+          V: StableDeref + DerefMut
 {
     fn default() -> Self {
         TotalOrderMultiMap {
@@ -172,7 +173,7 @@ impl<K, V> Default for TotalOrderMultiMap<K, V>
 // Note further implementations in sub-modules (entry.rs, iter.rs, ...)
 impl<K, V> TotalOrderMultiMap<K, V>
     where K: Hash+Eq+Copy,
-          V: StableDeref
+          V: StableDeref + DerefMut
 {
 
     /// create a new empty map
@@ -277,28 +278,31 @@ impl<K, V> TotalOrderMultiMap<K, V>
         self.map_access.contains_key(&k)
     }
 
-    /// returns values associated with the given key
+    /// Returns values associated with the given key.
     ///
     /// If the key is not in the map this will return `None`.
-    /// This also means that `EntryValues` has at at alst one
+    /// This also means that `EntryValues` has at last one
     /// element.
     pub fn get(&self, k: K) -> Option<EntryValues<V::Target>>{
         self.map_access.get(&k)
-            .map(|vec| EntryValues {
-                inner_iter: vec.iter(),
-            } )
+            .map(|vec| EntryValues { inner_iter: vec.iter() })
     }
 
-//    pub fn get_mut(&mut self, k: K) -> Option<EntryValuesMut<V::Target>> {
-//        self.map_access.get_mut(&k)
-//            .map(|vec| EntryValuesMut(vec.iter_mut()))
-//    }
+    /// Returns mutable references associated with the given key.
+    ///
+    /// If the key is not in the map this will return `None`.
+    /// This means the `EntryValuesMut` has at last one element.
+    pub fn get_mut(&mut self, k: K) -> Option<EntryValuesMut<V::Target>> {
+        self.map_access.get_mut(&k)
+            .map(|vec| EntryValuesMut { inner_iter: vec.iter_mut() })
+    }
 
     /// inserts a key, value pair and returns the new count of values for the given key
     pub fn insert(&mut self, key: K, value: V) -> usize {
         use self::hash_map::Entry::*;
+        let mut value = value;
 
-        let ptr: *const V::Target = &*value;
+        let ptr: *mut V::Target = &mut *value;
         self.vec_data.push((key, value));
         match self.map_access.entry(key) {
             Occupied(oe) => {
@@ -324,7 +328,7 @@ impl<K, V> TotalOrderMultiMap<K, V>
                     .expect("[BUG] key in vec_data but not map_access");
 
                 let to_remove = vec.iter().rposition(|ptr| {
-                    *ptr == val_ptr
+                    *ptr as *const _ == val_ptr
                 }).expect("[BUG] no ptr for value in map_access");
                 vec.remove(to_remove);
             }
@@ -382,7 +386,7 @@ impl<K, V> TotalOrderMultiMap<K, V>
             {
                 if let Some(values) = self.map_access.get_mut(&key) {
                     //TODO use remove_item once stable (rustc #40062) [inlined unstable def]
-                    match values.iter().position(|x| *x == ptr) {
+                    match values.iter().position(|x| *x as *const _ == ptr) {
                         Some(idx) => {
                             values.remove(idx);
                         },
@@ -426,7 +430,7 @@ impl<K, V> TotalOrderMultiMap<K, V>
 
 impl<K, V> Debug for TotalOrderMultiMap<K, V>
     where K: Hash + Eq + Copy + Debug,
-          V: StableDeref + Debug
+          V: StableDeref + DerefMut + Debug
 {
     fn fmt(&self, fter: &mut fmt::Formatter) -> fmt::Result {
         write!(fter, "TotalOrderMultiMap {{ ")?;
@@ -439,7 +443,7 @@ impl<K, V> Debug for TotalOrderMultiMap<K, V>
 
 impl<K, V> Clone for TotalOrderMultiMap<K, V>
     where K: Hash + Eq + Copy,
-          V: StableDeref + Clone
+          V: StableDeref + DerefMut + Clone
 {
     fn clone(&self) -> Self {
         let vec_data = Vec::with_capacity(self.vec_data.len());
@@ -457,7 +461,7 @@ impl<K, V> Clone for TotalOrderMultiMap<K, V>
 /// Compares for equality which does consider the insertion order
 impl<K, V> PartialEq<Self> for TotalOrderMultiMap<K, V>
     where K: Hash + Eq + Copy,
-          V: StableDeref + PartialEq<V>,
+          V: StableDeref + DerefMut + PartialEq<V>,
 {
     #[inline]
     fn eq(&self, other: &Self) -> bool {
@@ -468,13 +472,13 @@ impl<K, V> PartialEq<Self> for TotalOrderMultiMap<K, V>
 /// Compares for equality which does consider the insertion order
 impl<K, V> Eq for TotalOrderMultiMap<K, V>
     where K: Hash + Eq + Copy,
-          V: StableDeref + Eq,
+          V: StableDeref + DerefMut + Eq,
 {}
 
 
 impl<K, V> IntoIterator for TotalOrderMultiMap<K, V>
     where K: Hash + Eq + Copy,
-          V: StableDeref,
+          V: StableDeref + DerefMut,
 {
     type Item = (K, V);
     type IntoIter = vec::IntoIter<(K, V)>;
@@ -490,7 +494,7 @@ impl<K, V> IntoIterator for TotalOrderMultiMap<K, V>
 
 impl<K, V> FromIterator<(K, V)> for TotalOrderMultiMap<K, V>
     where K: Hash + Eq + Copy,
-          V: StableDeref,
+          V: StableDeref + DerefMut,
 {
 
     fn from_iter<I: IntoIterator<Item=(K,V)>>(src: I) -> Self {
@@ -511,7 +515,7 @@ impl<K, V> FromIterator<(K, V)> for TotalOrderMultiMap<K, V>
 
 impl<K, V> Extend<(K, V)> for TotalOrderMultiMap<K, V>
     where K: Hash + Eq + Copy,
-          V: StableDeref
+          V: StableDeref + DerefMut
 {
     fn extend<I>(&mut self, src: I)
         where I: IntoIterator<Item=(K,V)>
@@ -532,7 +536,9 @@ impl<K, V> Extend<(K, V)> for TotalOrderMultiMap<K, V>
 /// type appear.
 ///
 pub struct EntryValues<'a, T: ?Sized+'a>{
-    inner_iter: slice::Iter<'a, *const T>,
+    /// Note: we might have `*mut T` value but we are only allowed to
+    /// use them as `*const T` in this context!!
+    inner_iter: slice::Iter<'a, *mut T>,
 }
 
 impl<'a, T> EntryValues<'a, T>
@@ -584,47 +590,59 @@ impl<'a, T> Debug for EntryValues<'a, T>
     }
 }
 
-//TODO this was blocked but should now be doable
-//pub struct EntryValuesMut<'a, T: ?Sized+'a>(slice::IterMut<'a, *const T>);
+/// A type providing mut access to all values associated to "some key"
+///
+/// This is mainly an iterator over values, or more precisely
+/// mut references to the inner value of the values.
+///
+/// This is returned by `TotalOrderMultiMap.get_mut`, so it does not
+/// contain the key as it should be known in any context where this
+/// type appear.
+///
+pub struct EntryValuesMut<'a, T: ?Sized+'a>{
+    inner_iter: slice::IterMut<'a, *mut T>,
+}
 
-//impl<'a, T: ?Sized + 'a> Iterator for EntryValuesMut<'a, T> {
-//    type Item = &'a mut T;
-//
-//    #[inline]
-//    fn next(&mut self) -> Option<Self::Item> {
-//        //SAFE: the pointers are guaranteed to be valid, at last for lifetime 'a
-//        self.0.next().map(|&mut ptr| unsafe { &mut *ptr} )
-//    }
-//
-//    #[inline]
-//    fn size_hint(&self) -> (usize, Option<usize>) {
-//        self.0.size_hint()
-//    }
-//}
-//
-//impl<'a, T: ?Sized + 'a> ExactSizeIterator for EntryValuesMut<'a, T> {
-//
-//    #[inline]
-//    fn len(&self) -> usize {
-//        self.0.len()
-//    }
-//}
-//
-//impl<'a, T: ?Sized + 'a> Debug for EntryValuesMut<'a, T> {
-//
-//    fn fmt(&self, fter: &mut fmt::Formatter) -> fmt::Result {
-//        self.0.fmt(fter)
-//    }
-//}
+impl<'a, T: ?Sized + 'a> Iterator for EntryValuesMut<'a, T> {
+    type Item = &'a mut T;
+
+    #[inline]
+    fn next(&mut self) -> Option<Self::Item> {
+        //SAFE: the pointers are guaranteed to be valid, at last for lifetime 'a
+        self.inner_iter.next().map(|&mut ptr| unsafe { &mut *ptr })
+    }
+
+    #[inline]
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.inner_iter.size_hint()
+    }
+}
+
+impl<'a, T: ?Sized + 'a> ExactSizeIterator for EntryValuesMut<'a, T> {
+
+    #[inline]
+    fn len(&self) -> usize {
+        self.inner_iter.len()
+    }
+}
+
+impl<'a, T> Debug for EntryValuesMut<'a, T>
+    where T: ?Sized + Debug + 'a
+{
+
+    fn fmt(&self, fter: &mut fmt::Formatter) -> fmt::Result {
+        fter.write_str("EntryValuesMut(..)")
+    }
+}
 
 /// see `SendSyncHelper`
 unsafe impl<K, V> Send for TotalOrderMultiMap<K, V>
-    where SyncSendHelper<K,V>: Send, V: StableDeref, K: Hash + Eq + Copy {}
+    where SyncSendHelper<K,V>: Send, V: StableDeref + DerefMut, K: Hash + Eq + Copy {}
 
 
 /// see `SendSyncHelper`
 unsafe impl<K, V> Sync for TotalOrderMultiMap<K, V>
-    where SyncSendHelper<K,V>: Sync, V: StableDeref, K: Hash + Eq + Copy {}
+    where SyncSendHelper<K,V>: Sync, V: StableDeref + DerefMut, K: Hash + Eq + Copy {}
 
 /// Delegate the job of deciding about Send, Sync to rustc (ignore this)
 ///
@@ -643,10 +661,10 @@ mod test {
     use super::*;
 
 
-    use std::sync::Arc;
-    fn arc_str(s: &str) -> Arc<str> {
-        <Arc<str> as From<String>>::from(s.to_owned())
-    }
+    // use std::sync::Arc;
+    // fn arc_str(s: &str) -> Arc<str> {
+    //     <Arc<str> as From<String>>::from(s.to_owned())
+    // }
 
 
     #[test]
@@ -748,66 +766,111 @@ mod test {
     #[test]
     fn get_set() {
         let mut map = TotalOrderMultiMap::new();
-        let a = arc_str("a");
-        let co_a = a.clone();
-        let eq_a = arc_str("a");
-        map.insert("k1", a);
-        map.insert("k1", co_a);
-        map.insert("k1", eq_a.clone());
-        map.insert("k2", eq_a);
-        map.insert("k3", arc_str("y"));
-        map.insert("k4", arc_str("z"));
-        map.insert("k4", arc_str("a"));
-        map.insert("k1", arc_str("e"));
+        let a = "a".to_owned();
+        map.insert("k1", a.clone());
+        map.insert("k1", a.clone());
+        map.insert("k2", a.clone());
+        map.insert("k3", "y".to_owned());
+        map.insert("k4", "z".to_owned());
+        map.insert("k4", "a".to_owned());
+        map.insert("k1", "e".to_owned());
 
-        let val_k1 = map.get("k1");
-        assert_eq!(true, val_k1.is_some());
-        let val_k1 = val_k1.unwrap();
-        assert_eq!(4, val_k1.len());
-        assert_eq!((4,Some(4)), val_k1.size_hint());
-        assert_eq!(["a", "a", "a", "e"], val_k1.collect::<Vec<_>>().as_slice());
-
-        let val_k2 = map.get("k2");
-        assert_eq!(true, val_k2.is_some());
-        let val_k2 = val_k2.unwrap();
-        assert_eq!(1, val_k2.len());
-        assert_eq!((1,Some(1)), val_k2.size_hint());
-        assert_eq!(["a"], val_k2.collect::<Vec<_>>().as_slice());
-
+        let val_k1 = map.get("k1").expect("expect some k1");
+        assert_eq!(3, val_k1.len());
+        assert_eq!((3, Some(3)), val_k1.size_hint());
         assert_eq!(
-            ["a", "a", "a", "a", "y", "z", "a", "e" ],
-            map.values().collect::<Vec<_>>().as_slice()
-        );
-
-        let mut expected = HashSet::new();
-        expected.insert(("k1", vec![ "a", "a", "a", "e" ]));
-        expected.insert(("k2", vec![ "a" ]));
-        expected.insert(("k3", vec![ "y" ]));
-        expected.insert(("k4", vec![ "z", "a" ]));
-        assert_eq!(
-            expected,
-            map.group_iter()
-                .map(|giter| (giter.key(), giter.collect::<Vec<_>>()) )
-                .collect::<HashSet<_>>()
-        );
-
-        assert_eq!(
-            [ ("k1", "a"), ("k1", "a"), ("k1", "a"), ("k2", "a"),
-                ("k3", "y"), ("k4", "z"), ("k4", "a"), ("k1", "e")],
-            map.iter().collect::<Vec<_>>().as_slice()
+            ["a", "a", "e"],
+            val_k1.collect::<Vec<_>>().as_slice()
         );
     }
 
     #[test]
+    fn get_mut() {
+        let ka = "aa";
+        let kb = "bb";
+
+        let a: Box<u32> = Box::new(12u32);
+        let b: Box<u32> = Box::new(13u32);
+
+        let mut map = TotalOrderMultiMap::new();
+        map.insert(ka, a);
+        map.insert(kb, b);
+
+        {
+            let mut a_vals = map.get_mut(ka).expect("a to be there");
+            let ref_a = a_vals.next().unwrap();
+            *ref_a = 44;
+        }
+        assert_eq!(2, map.len());
+        assert_eq!(Some(vec![44]), map.get(ka).map(|i| i.map(Clone::clone).collect()));
+        assert_eq!(Some(vec![13]), map.get(kb).map(|i| i.map(Clone::clone).collect()));
+        assert!(map.get(&ka[..1]).is_none());
+    }
+
+    // Re-enabled on non DerefMut can be used again
+    // #[test]
+    // fn get_set() {
+    //     let mut map = TotalOrderMultiMap::new();
+    //     let a = arc_str("a");
+    //     let co_a = a.clone();
+    //     let eq_a = arc_str("a");
+    //     map.insert("k1", a);
+    //     map.insert("k1", co_a);
+    //     map.insert("k1", eq_a.clone());
+    //     map.insert("k2", eq_a);
+    //     map.insert("k3", arc_str("y"));
+    //     map.insert("k4", arc_str("z"));
+    //     map.insert("k4", arc_str("a"));
+    //     map.insert("k1", arc_str("e"));
+
+    //     let val_k1 = map.get("k1");
+    //     assert_eq!(true, val_k1.is_some());
+    //     let val_k1 = val_k1.unwrap();
+    //     assert_eq!(4, val_k1.len());
+    //     assert_eq!((4,Some(4)), val_k1.size_hint());
+    //     assert_eq!(["a", "a", "a", "e"], val_k1.collect::<Vec<_>>().as_slice());
+
+    //     let val_k2 = map.get("k2");
+    //     assert_eq!(true, val_k2.is_some());
+    //     let val_k2 = val_k2.unwrap();
+    //     assert_eq!(1, val_k2.len());
+    //     assert_eq!((1,Some(1)), val_k2.size_hint());
+    //     assert_eq!(["a"], val_k2.collect::<Vec<_>>().as_slice());
+
+    //     assert_eq!(
+    //         ["a", "a", "a", "a", "y", "z", "a", "e" ],
+    //         map.values().collect::<Vec<_>>().as_slice()
+    //     );
+
+    //     let mut expected = HashSet::new();
+    //     expected.insert(("k1", vec![ "a", "a", "a", "e" ]));
+    //     expected.insert(("k2", vec![ "a" ]));
+    //     expected.insert(("k3", vec![ "y" ]));
+    //     expected.insert(("k4", vec![ "z", "a" ]));
+    //     assert_eq!(
+    //         expected,
+    //         map.group_iter()
+    //             .map(|giter| (giter.key(), giter.collect::<Vec<_>>()) )
+    //             .collect::<HashSet<_>>()
+    //     );
+
+    //     assert_eq!(
+    //         [ ("k1", "a"), ("k1", "a"), ("k1", "a"), ("k2", "a"),
+    //             ("k3", "y"), ("k4", "z"), ("k4", "a"), ("k1", "e")],
+    //         map.iter().collect::<Vec<_>>().as_slice()
+    //     );
+    // }
+
+    #[test]
     fn pop() {
         let mut map = TotalOrderMultiMap::new();
-        map.insert("k1", "hy");
-        map.insert("k2", "ho");
-        map.insert("k1", "last");
+        map.insert("k1", "hy".to_owned());
+        map.insert("k2", "ho".to_owned());
+        map.insert("k1", "last".to_owned());
 
         let last = map.pop();
         assert_eq!(
-            Some(("k1", "last")),
+            Some(("k1", "last".to_owned())),
             last
         );
     }
@@ -832,8 +895,8 @@ mod test {
     #[test]
     fn reverse() {
         let mut map = TotalOrderMultiMap::new();
-        map.insert("k1", "ok");
-        map.insert("k2", "why not?");
+        map.insert("k1", "ok".to_owned());
+        map.insert("k2", "why not?".to_owned());
         map.reverse();
 
         assert_eq!(
@@ -846,10 +909,10 @@ mod test {
     #[test]
     fn remove_all() {
         let mut map = TotalOrderMultiMap::new();
-        map.insert("k1", "ok");
-        map.insert("k2", "why not?");
-        map.insert("k1", "run");
-        map.insert("k2", "jump");
+        map.insert("k1", "ok".to_owned());
+        map.insert("k2", "why not?".to_owned());
+        map.insert("k1", "run".to_owned());
+        map.insert("k2", "jump".to_owned());
         let did_rm = map.remove_all("k1");
         assert_eq!(true, did_rm);
         assert_eq!(false, map.remove_all("not_a_key"));
@@ -863,10 +926,10 @@ mod test {
     #[test]
     fn retain() {
         let mut map = TotalOrderMultiMap::new();
-        map.insert("k1", "ok");
-        map.insert("k2", "why not?");
-        map.insert("k1", "run");
-        map.insert("k2", "uh");
+        map.insert("k1", "ok".to_owned());
+        map.insert("k2", "why not?".to_owned());
+        map.insert("k1", "run".to_owned());
+        map.insert("k2", "uh".to_owned());
 
         map.retain(|key, val| {
             assert!(key.len() == 2);
@@ -879,38 +942,39 @@ mod test {
         );
     }
 
-    #[test]
-    fn retain_with_equal_pointers() {
-        let mut map = TotalOrderMultiMap::new();
-        let v1 = arc_str("v1");
-        map.insert("k1", v1.clone());
-        map.insert("k2", v1.clone());
-        map.insert("k1", arc_str("v2"));
-        map.insert("k1", v1);
+    //Test can only be re-enabled once non DerefMut values are supported again.
+    // #[test]
+    // fn retain_with_equal_pointers() {
+    //     let mut map = TotalOrderMultiMap::new();
+    //     let v1 = arc_str("v1");
+    //     map.insert("k1", v1.clone());
+    //     map.insert("k2", v1.clone());
+    //     map.insert("k1", arc_str("v2"));
+    //     map.insert("k1", v1);
 
-        let mut rem_count = 0;
-        map.retain(|_key, val| {
-            if rem_count >= 2 { return true; }
-            if &*val == "v1" {
-                rem_count += 1;
-                false
-            } else {
-                true
-            }
-        });
+    //     let mut rem_count = 0;
+    //     map.retain(|_key, val| {
+    //         if rem_count >= 2 { return true; }
+    //         if &*val == "v1" {
+    //             rem_count += 1;
+    //             false
+    //         } else {
+    //             true
+    //         }
+    //     });
 
-        assert_eq!(
-            [("k1", "v2"), ("k1", "v1")],
-            map.iter().collect::<Vec<_>>().as_slice()
-        );
-    }
+    //     assert_eq!(
+    //         [("k1", "v2"), ("k1", "v1")],
+    //         map.iter().collect::<Vec<_>>().as_slice()
+    //     );
+    // }
 
 
     trait AssertSend: Send {}
     impl<K: Send, V: Send> AssertSend for TotalOrderMultiMap<K, V>
-        where V: StableDeref, K: Hash + Eq + Copy, V::Target: Sync {}
+        where V: StableDeref + DerefMut, K: Hash + Eq + Copy, V::Target: Sync {}
 
     trait AssertSync: Sync {}
     impl<K: Sync, V: Sync> AssertSync for TotalOrderMultiMap<K, V>
-        where V: StableDeref, K: Hash + Eq + Copy, V::Target: Sync {}
+        where V: StableDeref + DerefMut, K: Hash + Eq + Copy, V::Target: Sync {}
 }
