@@ -2,6 +2,7 @@ use std::hash::Hash;
 use std::cmp::Eq;
 use std::fmt::{self, Debug};
 use std::collections::hash_map;
+use std::ops::DerefMut;
 
 use stable_deref_trait::StableDeref;
 
@@ -11,7 +12,7 @@ use super::TotalOrderMultiMap;
 
 impl<K, V> TotalOrderMultiMap<K, V>
     where K: Hash + Eq + Copy,
-          V: StableDeref
+          V: StableDeref + DerefMut
 {
     /// return a entry for a given key
     pub fn entry(&mut self, key: K) -> Entry<K, V> {
@@ -23,15 +24,15 @@ impl<K, V> TotalOrderMultiMap<K, V>
 
 pub struct Entry<'a, K, V>
     where K: 'a,
-          V: StableDeref + 'a,
+          V: StableDeref + DerefMut + 'a,
 {
     vec_data_ref: &'a mut Vec<(K, V)>,
-    map_access_entry: hash_map::Entry<'a, K, Vec<*const V::Target>>
+    map_access_entry: hash_map::Entry<'a, K, Vec<*mut V::Target>>
 }
 
 impl<'a, K, V> Debug for Entry<'a, K, V>
     where K: Hash + Eq + Copy + Debug + 'a,
-          V: StableDeref + 'a,
+          V: StableDeref + DerefMut + 'a,
           V::Target: Debug
 {
     fn fmt(&self, fter: &mut fmt::Formatter) -> fmt::Result {
@@ -54,7 +55,7 @@ impl<'a, K, V> Debug for Entry<'a, K, V>
 
 impl<'a, K, V> Entry<'a, K, V>
     where K: Hash + Eq + Copy + 'a,
-          V: StableDeref + 'a
+          V: StableDeref + DerefMut + 'a
 {
     /// access the key used to construct this entry
     pub fn key(&self) -> K {
@@ -71,11 +72,12 @@ impl<'a, K, V> Entry<'a, K, V>
     }
 
     /// insert a value associating it with the key
-    pub fn insert(self, val: V) -> &'a V::Target {
+    pub fn insert(self, val: V) -> &'a mut V::Target {
         use self::hash_map::Entry::*;
+        let mut val = val;
 
         let Entry { vec_data_ref, map_access_entry } = self;
-        let ptr: *const V::Target = &*val;
+        let ptr: *mut V::Target = val.deref_mut();
         let key = *map_access_entry.key();
 
         vec_data_ref.push((key, val));
@@ -90,8 +92,8 @@ impl<'a, K, V> Entry<'a, K, V>
             }
         }
 
-        //can't use the entries return value as it's &mut Vec<ptr> with last == ptr
-        unsafe { &*ptr }
+        // Can't use the entries return value as it's &mut Vec<ptr> with last == ptr.
+        unsafe { &mut *ptr }
     }
 
 
@@ -106,16 +108,16 @@ mod test {
     #[test]
     fn entry() {
         let mut map = TotalOrderMultiMap::new();
-        map.insert("k1", "v1");
-        map.insert("k2", "b");
-        map.insert("k1", "v2");
+        map.insert("k1", "v1".to_owned());
+        map.insert("k2", "b".to_owned());
+        map.insert("k1", "v2".to_owned());
 
 
         {
             let entry = map.entry("k1");
             assert_eq!("k1", entry.key());
             assert_eq!(2, entry.value_count());
-            entry.insert("vX");
+            entry.insert("vX".to_owned());
         }
 
         assert_eq!(
@@ -138,7 +140,7 @@ mod test {
             let entry = map.entry("k88");
             assert_eq!("k88", entry.key());
             assert_eq!(0, entry.value_count());
-            entry.insert("end.");
+            entry.insert("end.".to_owned());
         }
 
         assert_eq!(
