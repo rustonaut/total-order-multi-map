@@ -152,3 +152,11 @@ Change Log
 - `v0.3`:
   - `TotalOrderMultiMap.retain` now accepts a predicate accepting `&V::Target` instead
     of `&V`
+- `v0.4.1`:
+  - flatten return value to `get` to return empty iterators instead
+    of `None`
+  - requires `DerefMut` instead of just `Deref`
+  - has mutable access methods like `get_mut`
+  - split `insert` into `add` and `set` where `set` replaces any value
+    associated with the key prev. with the new value returning the old
+    value
