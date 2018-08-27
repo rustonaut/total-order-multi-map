@@ -39,13 +39,13 @@ impl<K, V> TotalOrderMultiMap<K, V>
     /// Inner-Values are returned in the order they where inserted into
     /// the map. Note that
     pub fn values(&self) -> Values<K, V> {
-        Values(self.vec_data.iter())
+        Values { inner_iter: self.vec_data.iter() }
     }
 
 
     /// Returns a iterator over the values in this multi map.
     pub fn values_mut(&mut self) -> ValuesMut<K, V> {
-        ValuesMut(self.vec_data.iter_mut())
+        ValuesMut { inner_iter: self.vec_data.iter_mut() }
     }
 }
 
@@ -285,12 +285,26 @@ impl<'a, K, T> Iterator for GroupedValuesMut<'a, K, T>
 
 
 
-pub struct Values<'a, K: 'a, V: 'a>(slice::Iter<'a, (K, V)>);
-pub struct ValuesMut<'a, K: 'a, V: 'a>(slice::IterMut<'a, (K, V)>);
+pub struct Values<'a, K: 'a, V: 'a> {
+    inner_iter: slice::Iter<'a, (K, V)>
+}
+
+pub struct ValuesMut<'a, K: 'a, V: 'a> {
+    inner_iter: slice::IterMut<'a, (K, V)>
+}
+
+impl<'a, K: 'a, V: 'a> From<ValuesMut<'a, K, V>> for Values<'a, K, V> {
+    fn from(valsmut: ValuesMut<'a, K, V>) -> Self {
+        let ValuesMut { inner_iter } = valsmut;
+        let as_slice = inner_iter.into_slice();
+        let inner_iter = as_slice.iter();
+        Values { inner_iter }
+    }
+}
 
 impl<'a, K: 'a, V: 'a> Clone for Values<'a, K, V> {
     fn clone(&self) -> Self {
-        Values(self.0.clone())
+        Values { inner_iter: self.inner_iter.clone() }
     }
 }
 
@@ -301,14 +315,13 @@ impl<'a, K: 'a, V: 'a> Iterator for Values<'a, K, V>
 
     #[inline]
     fn next(&mut self) -> Option<Self::Item> {
-        self.0.next().map(|&(_, ref v)| {
-            &**v
-        })
+        self.inner_iter.next()
+            .map(|&(_, ref v)| &**v)
     }
 
     #[inline]
     fn size_hint(&self) -> (usize, Option<usize>) {
-        self.0.size_hint()
+        self.inner_iter.size_hint()
     }
 }
 
@@ -316,7 +329,7 @@ impl<'a, K: 'a, V: 'a> ExactSizeIterator for Values<'a, K, V>
     where V: StableDeref + DerefMut
 {
     fn len(&self) -> usize {
-        self.0.len()
+        self.inner_iter.len()
     }
 }
 
@@ -336,14 +349,14 @@ impl<'a, K: 'a, V: 'a> Iterator for ValuesMut<'a, K, V>
 
     #[inline]
     fn next(&mut self) -> Option<Self::Item> {
-        self.0.next().map(|&mut (_, ref mut v)| {
+        self.inner_iter.next().map(|&mut (_, ref mut v)| {
             &mut **v
         })
     }
 
     #[inline]
     fn size_hint(&self) -> (usize, Option<usize>) {
-        self.0.size_hint()
+        self.inner_iter.size_hint()
     }
 
 }
@@ -352,7 +365,7 @@ impl<'a, K: 'a, V: 'a> ExactSizeIterator for ValuesMut<'a, K, V>
     where V: StableDeref + DerefMut
 {
     fn len(&self) -> usize {
-        self.0.len()
+        self.inner_iter.len()
     }
 }
 
@@ -361,5 +374,23 @@ impl<'a, K: 'a, V: 'a> Debug for ValuesMut<'a, K, V>
 {
     fn fmt(&self, fter: &mut fmt::Formatter) -> fmt::Result {
         fter.write_str("ValuesMut { .. }")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn convert_mut_values_to_non_mut() {
+        let mut map = TotalOrderMultiMap::new();
+        map.add("k1", "v1".to_owned());
+        map.add("k0", "v2".to_owned());
+
+        let iter: Values<_, _> = map.values_mut().into();
+        assert_eq!(
+            vec!["v1", "v2"],
+            iter.collect::<Vec<_>>()
+        )
     }
 }

@@ -89,6 +89,15 @@ pub struct IterMut<'a, K: 'a, V: 'a> {
     vec_iter: slice::IterMut<'a, (K, V)>
 }
 
+impl<'a, K: 'a, V: 'a> From<IterMut<'a, K, V>> for Iter<'a, K, V> {
+    fn from(valsmut: IterMut<'a, K, V>) -> Self {
+        let IterMut { vec_iter } = valsmut;
+        let as_slice = vec_iter.into_slice();
+        let vec_iter = as_slice.iter();
+        Iter { vec_iter }
+    }
+}
+
 impl<'a, K, V> Iterator for IterMut<'a, K, V>
     where K: Hash + Eq + Copy,
           V: StableDeref + DerefMut
@@ -124,4 +133,21 @@ impl<'a, K, V> Debug for IterMut<'a, K, V>
     fn fmt(&self, fter: &mut fmt::Formatter) -> fmt::Result {
         fter.write_str("IterMut { .. }")
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn convert_iter_mut_to_non_mut() {
+        let mut map = TotalOrderMultiMap::new();
+        map.add("k1", "v1".to_owned());
+        let iter: Iter<_,_> = map.iter_mut().into();
+        assert_eq!(
+            vec![("k1", "v1")],
+            iter.collect::<Vec<_>>()
+        )
+    }
+
 }

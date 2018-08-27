@@ -629,6 +629,17 @@ pub struct EntryValuesMut<'a, T: ?Sized+'a>{
     inner_iter: Option<slice::IterMut<'a, *mut T>>,
 }
 
+impl<'a, T: ?Sized + 'a> From<EntryValuesMut<'a, T>> for EntryValues<'a, T> {
+    fn from(valmut: EntryValuesMut<'a, T>) -> Self {
+        let EntryValuesMut { inner_iter } = valmut;
+        let inner_iter = inner_iter.map(|iter_mut| {
+            let as_slice = iter_mut.into_slice();
+            as_slice.iter()
+        });
+        EntryValues { inner_iter }
+    }
+}
+
 impl<'a, T> EntryValuesMut<'a, T>
     where T: ?Sized + 'a
 {
@@ -713,6 +724,16 @@ mod test {
     //     <Arc<str> as From<String>>::from(s.to_owned())
     // }
 
+    #[test]
+    fn convert_entry_values_mut_to_non_mut() {
+        let mut map = TotalOrderMultiMap::new();
+        map.add("k1", "v1".to_owned());
+        let iter: EntryValues<_> = map.get_mut("k1").into();
+        assert_eq!(
+            vec!["v1"],
+            iter.collect::<Vec<_>>()
+        );
+    }
 
     #[test]
     fn clone_works_fine() {
