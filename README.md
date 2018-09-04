@@ -160,3 +160,12 @@ Change Log
   - split `insert` into `add` and `set` where `set` replaces any value
     associated with the key prev. with the new value returning the old
     value
+- `v0.4.2`:
+  - mut iter to non mut iter conversions
+    - Iter from IterMut
+    - Values from ValuesMut
+    - EntryValues from EntryValuesMut
+- `v0.4.3`:
+  - Added missing re-exports. Values, Values,
+    GroupedValuesMut are now public as they
+    should have been from the beginning.

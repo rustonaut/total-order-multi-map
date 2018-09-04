@@ -8,7 +8,7 @@ license = "MIT OR Apache-2.0"
 name = "total-order-multi-map"
 readme = "./README.md"
 repository = "https://github.com/1aim/total-order-multi-map/"
-version = "0.4.2"
+version = "0.4.3"
 
 [dependencies]
 stable_deref_trait = "1"
