@@ -85,9 +85,9 @@ use std::ops::DerefMut;
 use stable_deref_trait::StableDeref;
 
 use self::utils::DebugIterableOpaque;
-pub use self::iter::{ Iter, IterMut };
-pub use self::entry::Entry;
-pub use self::map_iter::{ Keys, GroupedValues };
+pub use self::iter::*;
+pub use self::entry::*;
+pub use self::map_iter::*;
 
 #[macro_use]
 mod utils;
