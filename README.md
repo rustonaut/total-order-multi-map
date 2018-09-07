@@ -173,3 +173,7 @@ Change Log
   - Added `truncate` method allowing the removal
     of any think inserted after the first `size`
     elements
+- `v0.4.5`:
+  - For entries added `values`,`values_mut` methods to
+    iterate over the values associated with the key used
+    to create the entry.
