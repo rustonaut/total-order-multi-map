@@ -327,24 +327,66 @@ impl<K, V> TotalOrderMultiMap<K, V>
 
     /// Remove and return the element last inserted.
     pub fn pop(&mut self) -> Option<(K, V)> {
-        if self.vec_data.is_empty() {
-            None
+        if let Some(&(k, ref val)) = self.vec_data.last() {
+            Self::delete_last_inserted_from_map_with_same_ptr(
+                    &mut self.map_access, k, val);
         } else {
-            {
-                let &(k, ref val) = &self.vec_data[self.vec_data.len() - 1];
-                let val_ptr: *const V::Target = &**val;
-                let vec = &mut self.map_access.get_mut(&k)
-                    .expect("[BUG] key in vec_data but not map_access");
-
-                let to_remove = vec.iter().rposition(|ptr| {
-                    *ptr as *const _ == val_ptr
-                }).expect("[BUG] no ptr for value in map_access");
-                vec.remove(to_remove);
-            }
-            let res = self.vec_data.pop();
-            debug_assert!(res.is_some(), "sanity check that we indeet did pop something");
-            res
+            return None;
         }
+
+        self.vec_data.pop()
+    }
+
+    /// Keeps the first `to_len` inserted headers, removing the remaining ones.
+    ///
+    /// If `to_len` is equal or larger the current length nothing will happen.
+    ///
+    /// This won't affect the capacity.
+    ///
+    /// Which headers are keeps/removed depends on the insertion order of
+    /// the headers in the map and is independent of the headers name or
+    /// if there had been other headers with the same name inserted before/after.
+    pub fn truncate(&mut self, to_len: usize) {
+        if to_len >= self.len() {
+            return;
+        }
+
+        {
+            let mut to_delete_iter = self.vec_data[to_len..].iter();
+            while let Some(&(key, ref val)) = to_delete_iter.next_back() {
+                Self::delete_last_inserted_from_map_with_same_ptr(
+                    &mut self.map_access, key, &val);
+            }
+        }
+
+        self.vec_data.truncate(to_len);
+    }
+
+    /// Removes the last inserted value from the map_access's bucked for the given key.
+    ///
+    /// # Panic
+    ///
+    /// If the key doesn't correspond to a key in `map` or
+    /// there is no ptr in the map equal to the ptr gotten
+    /// from the given value this will panic. As this function
+    /// is only used in places where key/value where given by
+    /// the `vec_data` array and as such the situation can only
+    /// appear if there is inconsistency in the map.
+    fn delete_last_inserted_from_map_with_same_ptr(
+        map: &mut HashMap<K, Vec<*mut V::Target>>,
+        key: K,
+        val: &V::Target
+    )
+    {
+        let exp_ptr: *const V::Target = val;
+        let bucket = map.get_mut(&key)
+            .expect("[BUG] key in vec_data but not map_access");
+
+        let to_remove_idx = bucket.iter()
+            .rposition(|ptr| *ptr as *const _ == exp_ptr)
+            .expect("[BUG] no ptr for value in map_access");
+
+        bucket.remove(to_remove_idx);
     }
 
     //FIXME(UPSTREAM): use drain_filter instead of retain once stable then return Vec<V>
@@ -873,6 +915,62 @@ mod test {
         assert_eq!(vec![44], map.get(ka).map(|v|*v).collect::<Vec<_>>());
         assert_eq!(vec![13], map.get(kb).map(|v|*v).collect::<Vec<_>>());
         assert_eq!(0, map.get(&ka[..1]).len());
+    }
+
+    #[test]
+    fn truncate_longer() {
+        let mut map = TotalOrderMultiMap::new();
+        map.add("a", "hy".to_owned());
+        map.add("b", "ho".to_owned());
+        map.add("a", "urgs".to_owned());
+
+        map.truncate(10);
+
+        assert_eq!(
+            vec![("a", "hy"), ("b", "ho"), ("a", "urgs")],
+            map.iter().collect::<Vec<_>>()
+        );
+
+        assert_eq!(
+            vec!["hy", "urgs"],
+            map.get("a").collect::<Vec<_>>()
+        );
+
+        assert_eq!(
+            vec!["ho"],
+            map.get("b").collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn truncate_a_view_elements() {
+        let mut map = TotalOrderMultiMap::new();
+        map.add("a", "hy".to_owned());
+        map.add("b", "ho".to_owned());
+        map.add("a", "urgs".to_owned());
+        map.add("c", "cirgs".to_owned());
+
+        map.truncate(2);
+
+        assert_eq!(
+            vec![("a", "hy"), ("b", "ho")],
+            map.iter().collect::<Vec<_>>()
+        );
+
+        assert_eq!(
+            vec!["hy"],
+            map.get("a").collect::<Vec<_>>()
+        );
+
+        assert_eq!(
+            vec!["ho"],
+            map.get("b").collect::<Vec<_>>()
+        );
+
+        assert_eq!(
+            Vec::<&'static str>::new(),
+            map.get("c").collect::<Vec<_>>()
+        );
     }
 
     // Re-enabled on non DerefMut can be used again
