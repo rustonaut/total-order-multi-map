@@ -10,7 +10,7 @@ use vec_drain_where::*;
 
 use utils::DebugIterableOpaque;
 
-use super::{TotalOrderMultiMap, EntryValuesMut};
+use super::{TotalOrderMultiMap, EntryValues, EntryValuesMut};
 
 impl<K, V> TotalOrderMultiMap<K, V>
     where K: Hash + Eq + Copy,
@@ -66,10 +66,24 @@ impl<'a, K, V> Entry<'a, K, V>
 
     /// return how many values are associated with this entries key
     pub fn value_count(&self) -> usize {
+        self.values().len()
+    }
+
+    /// Iterate over all values already inserted for the key.
+    pub fn values(&self) -> EntryValues<V::Target> {
         use self::hash_map::Entry::*;
         match self.map_access_entry {
-            Occupied(ref o) => o.get().len(),
-            Vacant(..) => 0
+            Occupied(ref o) => EntryValues::new(o.get().iter()),
+            Vacant(..) => EntryValues::empty()
+        }
+    }
+
+    /// Iterate over mutable references of values already inserted for the key.
+    pub fn values_mut(&mut self) -> EntryValuesMut<V::Target> {
+        use self::hash_map::Entry::*;
+        match self.map_access_entry {
+            Occupied(ref mut o) => EntryValuesMut::new(o.get_mut().iter_mut()),
+            Vacant(..) => EntryValuesMut::empty()
         }
     }
 
@@ -141,6 +155,20 @@ impl<'a, K, V> Entry<'a, K, V>
 #[cfg(test)]
 mod test {
     use super::*;
+
+    #[test]
+    fn iter_entry_values() {
+        let mut map = TotalOrderMultiMap::new();
+        map.add("k1", "v1".to_owned());
+        map.add("k2", "v2".to_owned());
+        map.add("k1", "v3".to_owned());
+        map.add("k3", "v4".to_owned());
+
+        assert_eq!(
+            vec!["v1", "v3"],
+            map.entry("k1").values().collect::<Vec<_>>()
+        );
+    }
 
     #[test]
     fn entry_set_with_prev_vals() {
