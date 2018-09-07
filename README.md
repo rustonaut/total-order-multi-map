@@ -169,3 +169,7 @@ Change Log
   - Added missing re-exports. Values, Values,
     GroupedValuesMut are now public as they
     should have been from the beginning.
+- `v0.4.4`:
+  - Added `truncate` method allowing the removal
+    of any think inserted after the first `size`
+    elements
