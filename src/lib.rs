@@ -372,6 +372,22 @@ impl<K, V> TotalOrderMultiMap<K, V>
     /// is only used in places where key/value where given by
     /// the `vec_data` array and as such the situation can only
     /// appear if there is inconsistency in the map.
+    ///
+    /// # Design Notes
+    ///
+    /// The first pointer match in the relevant bucket _from the back_
+    /// is removed. Wrt. this it's good to be aware about two thinks:
+    ///
+    /// - for trait objects two pointers might point to the same address
+    ///   but be different thinks _but_ if they are different thinks
+    ///   their vtable part is not the same and as such they won't be
+    ///   equal for pointer equality
+    ///
+    /// - all thinks later in the same bucket had been inserted after
+    ///   this match (in total insertion order), which means that even
+    ///   if the first statement doesn't held it's okay to use this
+    ///   to remove the last "n" entries from the back/front.
+    ///
     fn delete_last_inserted_from_map_with_same_ptr(
         map: &mut HashMap<K, Vec<*mut V::Target>>,
         key: K,
