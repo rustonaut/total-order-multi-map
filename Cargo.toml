@@ -1,5 +1,5 @@
 [package]
-authors = ["Philipp Korber <p.korber@1aim.com>"]
+authors = ["Philipp Korber <p.korber@dac.eu>"]
 categories = ["data-structures"]
 description = "A multimap with at the same time keeps the total insertion ordering of all elements "
 documentation = "https://docs.rs/total-order-multi-map"
@@ -8,8 +8,12 @@ license = "MIT OR Apache-2.0"
 name = "total-order-multi-map"
 readme = "./README.md"
 repository = "https://github.com/1aim/total-order-multi-map/"
-version = "0.4.5"
+version = "0.4.6"
 
 [dependencies]
 stable_deref_trait = "1"
 vec-drain-where = "1"
+
+
+[badges]
+maintenance = { status = "deprecated" }
